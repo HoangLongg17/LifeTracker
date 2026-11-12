@@ -1,0 +1,22 @@
+//File này giúp TypeScript biết cách kiểm tra và biên dịch mã nguồn.
+// rootDir là nơi chứa mã gốc, còn outDir là nơi xuất file JavaScript sau khi biên dịch.
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "NodeNext",
+        "moduleResolution": "NodeNext",
+        "rootDir": "./src",
+        "outDir": "./dist",
+        "strict": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "forceConsistentCasingInFileNames": true
+    },
+    "include": [
+        "src/**/*.ts"
+    ],
+    "exclude": [
+        "node_modules",
+        "dist"
+    ]
+}

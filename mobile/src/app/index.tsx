@@ -2,7 +2,7 @@ import { useState } from "react";
 import AuthTestPanel from "@/components/AuthTestPanel";
 
 import { firebaseApp } from "@/config/firebase";
-import TestBackendButton from "../../components/TestBackendButton";
+import TestBackendButton from "../components/TestBackendButton";
 import * as Device from 'expo-device';
 import {Button, Platform, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -47,29 +47,33 @@ export default function HomeScreen() {
       </SafeAreaView>
     );
   }
+
   return (
-    <ThemedView style={styles.container}>      <SafeAreaView style={styles.safeArea}>      <ThemedView style={styles.heroSection}>
-            <AnimatedIcon />
+    <ThemedView style={styles.container}>
+      <SafeAreaView style={styles.safeArea}>
+        <ThemedView style={styles.heroSection}>
+          <AnimatedIcon />
 
-            <ThemedText type="title" style={styles.title}>
-              Firebase: {firebaseApp.options.projectId || "CHUA_CO_PROJECT_ID"}
-            </ThemedText>
+          <ThemedText type="title" style={styles.title}>
+            Firebase: {firebaseApp.options.projectId || "CHUA_CO_PROJECT_ID"}
+          </ThemedText>
 
-            <ThemedText
-              type="small"
-              style={{ textAlign: 'center' }}
-            >
-              Firebase Project: {firebaseApp.options.projectId ?? "Chưa cấu hình"}
-              <Button
-                title="Kiểm thử đăng nhập Firebase"
-                onPress={() => setShowAuthTest(true)}
-              />
-            </ThemedText>
-                    </ThemedView>
+          <ThemedText
+            type="small"
+            style={{ textAlign: "center" }}
+          >
+            Firebase Project: {firebaseApp.options.projectId ?? "Chưa cấu hình"}
+          </ThemedText>
+
+          <Button
+            title="Kiểm thử đăng nhập Firebase"
+            onPress={() => setShowAuthTest(true)}
+          />
+        </ThemedView>
+
         <ThemedText type="code" style={styles.code}>
           get started
         </ThemedText>
-
         <ThemedView type="backgroundElement" style={styles.stepContainer}>
           <HintRow
             title="Try editing"

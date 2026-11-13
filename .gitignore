@@ -1,0 +1,26 @@
+
+# Thu vien duoc cai dat
+**/node_modules/
+
+# Expo
+**/.expo/
+
+# File build
+**/dist/
+**/build/
+
+# Bien moi truong
+**/.env
+**/.env.*
+!**/.env.example
+
+# Firebase Admin credentials
+**/*serviceAccountKey*.json
+**/service-account*.json
+
+# File log
+*.log
+
+# File he thong
+.DS_Store
+Thumbs.db

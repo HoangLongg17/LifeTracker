@@ -25,11 +25,17 @@ quản lý mục tiêu và tổng hợp dữ liệu sức khỏe cá nhân.
 
 ## 2. Cấu trúc dự án
 
+```text
 LifeTracker/
-├── mobile/ # Ứng dụng React Native + Expo
-├── backend/ # API Node.js + Express
-├── .gitignore
-└── README.md
+├── mobile/                    # Ứng dụng React Native + Expo
+├── backend/                   # API Node.js + Express
+├── firebase.json              # Cấu hình Firebase CLI
+├── firestore.rules            # Quy tắc bảo mật Cloud Firestore
+├── firestore.indexes.json     # Cấu hình chỉ mục Firestore
+├── .nvmrc                     # Phiên bản Node.js khuyến nghị
+├── .gitignore                 # Danh sách file không đưa lên Git
+└── README.md                  # Tài liệu hướng dẫn dự án
+```
 
 ## 3. Yêu cầu môi trường
 
@@ -42,6 +48,41 @@ Cần cài đặt:
 
 Điện thoại và máy tính cần kết nối cùng mạng nội bộ
 để Mobile truy cập Backend đang chạy trên laptop.
+
+### Yêu cầu phiên bản Node.js
+
+Dự án Life Tracker sử dụng Node.js 24 cho cả Mobile và Backend.
+
+- Phiên bản hỗ trợ: `>=24.12.0 <25`
+- Phiên bản khuyến nghị: `24.13.0`
+- Công cụ quản lý thư viện: npm
+
+Kiểm tra môi trường:
+
+```powershell
+node -v
+npm -v
+```
+
+Cài đặt thư viện Backend:
+
+```powershell
+cd backend
+npm ci
+```
+
+Cài đặt thư viện Mobile (thực hiện từ thư mục gốc dự án):
+
+```powershell
+cd mobile
+npm ci
+```
+
+**Lưu ý:**
+
+- Sử dụng `.env.example` làm mẫu để thiết lập biến môi trường cục bộ.
+- Không commit `.env`, `.env.local` hoặc thông tin bí mật lên GitHub.
+- Các thành viên cần thống nhất phiên bản Node.js trước khi phát triển và kiểm thử.
 
 ## 4. Cài đặt Backend
 
@@ -56,6 +97,7 @@ Tạo file `.env` dựa trên `.env.example`:
 
 ```env
 PORT=3000
+NODE_ENV=development
 FIREBASE_PROJECT_ID=lifetracker-dev-14382
 ```
 

@@ -1,3 +1,5 @@
+import { getAuth } from "firebase-admin/auth";
+import { profileRouter } from "./routes/profile";
 
 import "dotenv/config";
 import express from "express";
@@ -7,6 +9,7 @@ const app = express();
 
 // Cho phép Backend nhận dữ liệu JSON
 app.use(express.json());
+app.use("/users", profileRouter(getAuth(), db));
 
 // Kiểm tra trạng thái Backend
 app.get("/health", (_req, res) => {

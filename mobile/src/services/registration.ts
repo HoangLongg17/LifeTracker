@@ -1,27 +1,18 @@
-import { createUserWithEmailAndPassword, type User } from 'firebase/auth';
-import { auth } from '@/config/firebase';
+import { createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 
-export function createAccount(email: string, password: string) {
-  return createUserWithEmailAndPassword(auth, email.trim(), password);
-}
+import { getRegistrationAuth } from '@/config/firebase';
+import { bootstrapAccount } from '@/services/session';
 
-// Idempotent: retry this after a timeout or after restoring the Firebase session.
-export async function completeProfile(user: User) {
-  const baseUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
-  if (!baseUrl) throw new Error('Missing API URL');
-  const token = await user.getIdToken();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+export async function createAccount(email: string, password: string): Promise<'complete' | 'profile-pending'> {
+  const signupAuth = getRegistrationAuth();
+  const { user } = await createUserWithEmailAndPassword(signupAuth, email.trim(), password);
   try {
-    const response = await fetch(`${baseUrl}/users/bootstrap`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error('Profile unavailable');
-    const result = await response.json();
-    if (result.ready !== true || result.uid !== user.uid) throw new Error('Invalid profile response');
+    await bootstrapAccount(user);
+    return 'complete';
+  } catch {
+    // The account exists. The next explicit login retries profile setup for this UID.
+    return 'profile-pending';
   } finally {
-    clearTimeout(timeout);
+    if (signupAuth.currentUser === user) await signOut(signupAuth);
   }
 }

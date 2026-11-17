@@ -1,6 +1,8 @@
+import { errorCode, isValidEmail } from './auth';
+
 export function validateRegistration(email: string, password: string, confirmation: string) {
   const errors: { email?: string; password?: string; confirmation?: string } = {};
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+  if (!isValidEmail(email)) {
     errors.email = 'Vui lòng nhập email hợp lệ.';
   }
   if (password.length < 8) errors.password = 'Mật khẩu cần ít nhất 8 ký tự.';
@@ -10,7 +12,7 @@ export function validateRegistration(email: string, password: string, confirmati
 }
 
 export function registrationError(error: unknown): string {
-  const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
+  const code = errorCode(error);
   const messages: Record<string, string> = {
     'auth/email-already-in-use': 'Email này đã được đăng ký. Vui lòng đăng nhập.',
     'auth/invalid-email': 'Vui lòng nhập email hợp lệ.',

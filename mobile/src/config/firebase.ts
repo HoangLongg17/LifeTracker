@@ -2,9 +2,12 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
 
 import {
+  connectAuthEmulator,
   getAuth,
   getReactNativePersistence,
   initializeAuth,
+  inMemoryPersistence,
+  type Auth,
 } from "firebase/auth";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -63,4 +66,18 @@ function createAuth() {
   }
 }
 
-export const auth = createAuth();
+function configureEmulator(instance: Auth) {
+  const url = process.env.EXPO_PUBLIC_FIREBASE_AUTH_EMULATOR_URL;
+  if (__DEV__ && url && !instance.emulatorConfig) {
+    connectAuthEmulator(instance, url, { disableWarnings: true });
+  }
+  return instance;
+}
+
+export const auth = configureEmulator(createAuth());
+
+export function getRegistrationAuth() {
+  // Firebase signs in a newly created user. Keep that temporary session off the main app.
+  const registrationApp = initializeApp(firebaseApp.options, "registration");
+  return configureEmulator(initializeAuth(registrationApp, { persistence: inMemoryPersistence }));
+}

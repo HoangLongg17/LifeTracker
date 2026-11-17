@@ -14,6 +14,7 @@ export default function RegisterScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
+  const [hasReadInfo, setHasReadInfo] = useState(false);
   const [fontsLoaded, fontError] = useFonts({ Roboto_400Regular, Roboto_700Bold });
   const [errors, setErrors] = useState<ReturnType<typeof validateRegistration>>({});
   const [user, setUser] = useState<User | null>(null);
@@ -74,6 +75,7 @@ export default function RegisterScreen() {
       setReady(false);
       setMessage('');
       setErrors({});
+      setHasReadInfo(false);
     } catch {
       setMessage('Không thể đăng xuất. Vui lòng thử lại.');
     } finally {
@@ -128,10 +130,19 @@ export default function RegisterScreen() {
                 </View>
                 {errors.confirmation && <Text accessibilityRole="alert" style={styles.error}>{errors.confirmation}</Text>}
               </View>
-              <View style={styles.notice}>
-                <Image source={require('../../assets/images/registration/shield.svg')} style={{ width: 16, height: 16, marginTop: 3 }} />
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityLabel="Tôi đã đọc thông tin về dữ liệu cá nhân và phạm vi hỗ trợ thói quen sinh hoạt."
+                accessibilityState={{ checked: hasReadInfo, disabled: busy }}
+                disabled={busy}
+                onPress={() => setHasReadInfo((checked) => !checked)}
+                style={[styles.notice, busy && styles.disabled]}
+              >
+                <View style={[styles.checkbox, hasReadInfo && styles.checkboxChecked]}>
+                  {hasReadInfo && <Text style={styles.checkmark}>✓</Text>}
+                </View>
                 <Text style={styles.noticeText}>Tôi đã đọc thông tin về dữ liệu cá nhân và phạm vi hỗ trợ thói quen sinh hoạt.</Text>
-              </View>
+              </Pressable>
               <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy }} disabled={busy} onPress={submit} style={[styles.button, busy && styles.disabled]}>{busy ? <ActivityIndicator color="#F8FFF0" /> : <Text style={styles.buttonText}>Tạo tài khoản</Text>}</Pressable>
               <Link href="/login" asChild>
                 <Pressable accessibilityRole="link" disabled={busy} style={styles.loginLink}>
@@ -163,7 +174,10 @@ const styles = StyleSheet.create({
   inputBox: { marginTop: 5, height: 48, flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#C8D1C5', borderWidth: 1, borderRadius: 11, paddingHorizontal: 13, gap: 11 },
   fieldIcon: { width: 17, height: 17 },
   input: { flex: 1, minWidth: 0, height: 46, color: '#182E27', fontFamily: 'Roboto_400Regular', fontSize: 15, padding: 0, includeFontPadding: false },
-  notice: { marginTop: 30, minHeight: 62, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, flexDirection: 'row', gap: 10, backgroundColor: '#E6EDDC' },
+  checkbox: { width: 24, height: 24, borderWidth: 1.5, borderColor: '#205B47', borderRadius: 12, backgroundColor: '#F8FFF0', alignItems: 'center', justifyContent: 'center' },
+  checkboxChecked: { backgroundColor: '#174E40' },
+  checkmark: { color: '#FFFFFF', fontSize: 18, lineHeight: 22, fontWeight: '700' },
+  notice: { marginTop: 30, minHeight: 62, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#E6EDDC' },
   noticeText: { flex: 1, color: '#205B47', fontFamily: 'Roboto_400Regular', fontSize: 13, lineHeight: 18 },
   invalid: { borderColor: '#B91C1C' },
   error: { color: '#B91C1C', fontFamily: 'Roboto_400Regular', fontSize: 13, lineHeight: 18, marginTop: 6 },

@@ -1,5 +1,16 @@
 
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "weightLogs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "validationStatus", "order": "ASCENDING" },
+        { "fieldPath": "measuredAt", "order": "DESCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" },
+        { "fieldPath": "entryId", "order": "DESCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": []
 }

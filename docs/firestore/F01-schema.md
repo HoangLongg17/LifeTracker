@@ -68,6 +68,8 @@ Quy định:
 | `updatedAt`               | timestamp           | Bắt buộc, Backend quản lý            |
 | `version`                 | integer             | Bắt buộc, Backend quản lý            |
 
+`preferredUnits` chỉ ảnh hưởng cách hiển thị; dữ liệu lưu theo đơn vị chuẩn (kg, cm, mL). Hồ sơ mới mặc định dùng kg, cm và mL. `currentWeightKg` được suy ra từ số đo hợp lệ trong `weightLogs` có `measuredAt` mới nhất; cập nhật cân nặng phải thêm số đo mới, không ghi đè lịch sử.
+
 Không yêu cầu người dùng nhập tất cả dữ liệu hồ sơ ngay khi đăng ký. Các trường có điều kiện chỉ được bổ sung khi chức năng thực sự cần.
 
 ### Cấu trúc notificationSettings đang dùng để kiểm thử

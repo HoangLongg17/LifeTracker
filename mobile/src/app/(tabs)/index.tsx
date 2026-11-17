@@ -1,8 +1,9 @@
+import { Link } from "expo-router";
 import { useState } from "react";
 import AuthTestPanel from "@/components/AuthTestPanel";
 
 import { firebaseApp } from "@/config/firebase";
-import TestBackendButton from "../components/TestBackendButton";
+import TestBackendButton from "@/components/TestBackendButton";
 import * as Device from 'expo-device';
 import {Button, Platform, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -53,6 +54,7 @@ export default function HomeScreen() {
       <SafeAreaView style={styles.safeArea}>
         <ThemedView style={styles.heroSection}>
           <AnimatedIcon />
+          <Link href="/register" style={{ color: "#174E40", fontSize: 20, fontWeight: "700", padding: 12 }}>Đăng ký tài khoản</Link>
 
           <ThemedText type="title" style={styles.title}>
             Firebase: {firebaseApp.options.projectId || "CHUA_CO_PROJECT_ID"}

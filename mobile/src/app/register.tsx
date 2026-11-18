@@ -20,9 +20,10 @@ export default function RegisterScreen() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const lock = useRef(false);
+  const submitDisabled = busy || !hasReadInfo || session.status !== 'guest';
 
   async function submit() {
-    if (lock.current || session.status !== 'guest') return;
+    if (lock.current || submitDisabled) return;
     const issues = validateRegistration(email, password, confirmation);
     setErrors(issues);
     if (Object.keys(issues).length) return;
@@ -33,6 +34,7 @@ export default function RegisterScreen() {
       const registration = await createAccount(email, password);
       setPassword('');
       setConfirmation('');
+      setHasReadInfo(false);
       if (navigation.isFocused()) {
         router.dismissTo({ pathname: '/login', params: { registration } });
       }
@@ -83,6 +85,7 @@ export default function RegisterScreen() {
               <Pressable
                 accessibilityRole="checkbox"
                 accessibilityLabel="Tôi đã đọc thông tin về dữ liệu cá nhân và phạm vi hỗ trợ thói quen sinh hoạt."
+                accessibilityHint="Cần tích ô này để tạo tài khoản."
                 accessibilityState={{ checked: hasReadInfo, disabled: busy }}
                 disabled={busy}
                 onPress={() => setHasReadInfo((checked) => !checked)}
@@ -93,7 +96,15 @@ export default function RegisterScreen() {
                 </View>
                 <Text style={styles.noticeText}>Tôi đã đọc thông tin về dữ liệu cá nhân và phạm vi hỗ trợ thói quen sinh hoạt.</Text>
               </Pressable>
-              <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy }} disabled={busy} onPress={submit} style={[styles.button, busy && styles.disabled]}>{busy ? <ActivityIndicator color="#F8FFF0" /> : <Text style={ui.buttonText}>Tạo tài khoản</Text>}</Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: submitDisabled }}
+                disabled={submitDisabled}
+                onPress={submit}
+                style={[styles.button, submitDisabled && styles.disabled]}
+              >
+                {busy ? <ActivityIndicator color="#F8FFF0" /> : <Text style={ui.buttonText}>Tạo tài khoản</Text>}
+              </Pressable>
               <Link href="/login" dismissTo asChild>
                 <Pressable accessibilityRole="link" disabled={busy} style={styles.loginLink}>
                   <Text style={ui.link}>Đã có tài khoản? Đăng nhập</Text>

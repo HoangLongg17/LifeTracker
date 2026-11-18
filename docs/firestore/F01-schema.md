@@ -74,8 +74,7 @@ Không yêu cầu người dùng nhập tất cả dữ liệu hồ sơ ngay khi
 
 ```json
 {
-  "enabled": false,
-  "observedDevicePermission": "not_checked"
+  "enabled": false
 }
 ```
 
@@ -111,12 +110,5 @@ Firestore đã có một document mẫu tại `users/{uid}` cùng `profiles/main
 Dữ liệu mẫu chỉ phục vụ kiểm thử, không phải dữ liệu mặc định bắt buộc cho mọi người dùng.
 
 Khi chức năng đăng ký hoàn thiện, Backend phải tự tạo dữ liệu. Không yêu cầu tạo thủ công document cho từng người dùng.
-
-## 7. Nội dung cần thống nhất trước khi hoàn thiện API
-
-- Các trường con chính thức của `notificationSettings`.
-- Giá trị khởi tạo hồ sơ khi người dùng chưa nhập thông tin.
-- Cách khôi phục việc khởi tạo hồ sơ nếu bước ghi Firestore thất bại sau khi Firebase Auth tạo tài khoản.
-- Quy tắc cập nhật `version` và trường do Backend quản lý.
 
 Mọi thay đổi schema phải được thông báo cho các thành viên làm Mobile, Backend và kiểm thử trước khi áp dụng.

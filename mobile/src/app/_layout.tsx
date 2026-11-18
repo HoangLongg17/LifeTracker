@@ -37,6 +37,7 @@ function Navigation() {
         </Stack.Protected>
         <Stack.Protected guard={signedIn}>
           <Stack.Screen name="profile" />
+          <Stack.Screen name="personal-profile" />
         </Stack.Protected>
       </Stack>
     </ThemeProvider>

@@ -1,6 +1,7 @@
 import { Image } from 'expo-image';
+import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { accountStyles as ui, colors, SignOutButton } from '@/components/account-ui';
@@ -8,7 +9,7 @@ import { useSession } from '@/hooks/use-session';
 
 const settings = [
   { title: 'Lịch nhắc', subtitle: 'Lịch và quyền thông báo', icon: require('../../assets/images/account/bell.svg') },
-  { title: 'Dữ liệu cá nhân', subtitle: 'Xem, xuất hoặc yêu cầu xóa', icon: require('../../assets/images/registration/shield.svg') },
+  { title: 'Dữ liệu cá nhân', subtitle: 'Hồ sơ phục vụ theo dõi sinh hoạt', icon: require('../../assets/images/registration/shield.svg') },
   { title: 'Mục tiêu của tôi', subtitle: 'Chỉ tiêu và lịch sử điều chỉnh', icon: require('../../assets/images/account/target.svg') },
 ];
 
@@ -40,16 +41,24 @@ export default function ProfileScreen() {
 
         <Text accessibilityRole="header" style={styles.sectionTitle}>Thiết lập</Text>
         <View style={[styles.card, styles.settings]}>
-          {settings.map((item, index) => (
-            <View key={item.title} style={[styles.row, index < settings.length - 1 && styles.divider]}>
-              <View style={styles.iconBox}><Image source={item.icon} style={{ width: 18, height: 18 }} /></View>
-              <View style={styles.rowText}>
-                <Text style={styles.rowTitle}>{item.title}</Text>
-                <Text style={styles.rowSubtitle}>{item.subtitle}</Text>
-              </View>
-              <Image source={require('../../assets/images/account/chevron-right.svg')} style={{ width: 15, height: 15 }} />
-            </View>
-          ))}
+          {settings.map((item, index) => {
+            const content = (
+              <>
+                <View style={styles.iconBox}><Image source={item.icon} style={{ width: 18, height: 18 }} /></View>
+                <View style={styles.rowText}>
+                  <Text style={styles.rowTitle}>{item.title}</Text>
+                  <Text style={styles.rowSubtitle}>{item.subtitle}</Text>
+                </View>
+                <Image source={require('../../assets/images/account/chevron-right.svg')} style={{ width: 15, height: 15 }} />
+              </>
+            );
+            const rowStyle = [styles.row, index < settings.length - 1 && styles.divider];
+            return item.title === 'Dữ liệu cá nhân' ? (
+              <Pressable key={item.title} accessibilityRole="button" onPress={() => router.push('/personal-profile')} style={rowStyle}>
+                {content}
+              </Pressable>
+            ) : <View key={item.title} style={rowStyle}>{content}</View>;
+          })}
         </View>
         <View style={styles.logout}><SignOutButton /></View>
       </ScrollView>

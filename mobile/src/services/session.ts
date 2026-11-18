@@ -22,7 +22,13 @@ function apiBaseUrl() {
 
 type AccountResponse = { uid: string; ready: true; status?: string; displayName?: unknown };
 
-async function accountRequest(user: User, path: string, method: 'GET' | 'POST', refresh = false): Promise<AccountResponse> {
+export async function apiRequest(
+  user: User,
+  path: string,
+  method: 'GET' | 'POST' | 'PATCH',
+  body?: unknown,
+  refresh = false,
+): Promise<unknown> {
   const baseUrl = apiBaseUrl();
   const token = await user.getIdToken(refresh);
   const controller = new AbortController();
@@ -30,23 +36,35 @@ async function accountRequest(user: User, path: string, method: 'GET' | 'POST', 
   try {
     const response = await fetch(`${baseUrl}${path}`, {
       method,
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: controller.signal,
     });
     const data = await response.json().catch(() => null);
     if (!response.ok) {
       throw new AccountRequestError(response.status, data?.code ?? 'API_UNAVAILABLE');
     }
-    if (data?.uid !== user.uid || data.ready !== true) throw new Error('Invalid account response');
     return data;
   } catch (error) {
     if (!refresh && error instanceof AccountRequestError && error.status === 401 && error.code === 'TOKEN_EXPIRED') {
-      return accountRequest(user, path, method, true);
+      return apiRequest(user, path, method, body, true);
     }
     throw error;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function accountRequest(user: User, path: string, method: 'GET' | 'POST', refresh = false): Promise<AccountResponse> {
+  const data = await apiRequest(user, path, method, undefined, refresh);
+  if (!data || typeof data !== 'object' || !('uid' in data) || data.uid !== user.uid
+      || !('ready' in data) || data.ready !== true) {
+    throw new Error('Invalid account response');
+  }
+  return data as AccountResponse;
 }
 
 export async function bootstrapAccount(user: User) {

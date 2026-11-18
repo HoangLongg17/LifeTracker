@@ -1,5 +1,5 @@
 import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
-import { createContext, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
 
 import { auth } from '@/config/firebase';
 import { AccountRequestError, loadAccount } from '@/services/session';
@@ -26,6 +26,7 @@ const SessionContext = createContext<{
   session: Session;
   initialized: boolean;
   retry: () => void;
+  updateDisplayName: (displayName: string | null) => void;
 } | null>(null);
 
 export function SessionProvider({ children }: PropsWithChildren) {
@@ -33,6 +34,10 @@ export function SessionProvider({ children }: PropsWithChildren) {
   const [initialized, setInitialized] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const notice = useRef<string | undefined>(undefined);
+  const retry = useCallback(() => setAttempt(value => value + 1), []);
+  const updateDisplayName = useCallback((displayName: string | null) => setSession(current => current.status === 'active'
+    ? { ...current, displayName }
+    : current), []);
 
   useEffect(() => {
     let generation = 0;
@@ -73,7 +78,12 @@ export function SessionProvider({ children }: PropsWithChildren) {
   }, [attempt]);
 
   return (
-    <SessionContext.Provider value={{ session, initialized, retry: () => setAttempt(value => value + 1) }}>
+    <SessionContext.Provider value={{
+      session,
+      initialized,
+      retry,
+      updateDisplayName,
+    }}>
       {children}
     </SessionContext.Provider>
   );

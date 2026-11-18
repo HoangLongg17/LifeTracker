@@ -488,7 +488,6 @@ export function profileRouter(auth: Pick<Auth, 'verifyIdToken'>, db: Firestore) 
             heightCm: null,
             notificationSettings: {
               enabled: false,
-              observedDevicePermission: 'not_checked',
             },
             preferredUnits: defaultUnits,
             timeZone: 'Asia/Ho_Chi_Minh',

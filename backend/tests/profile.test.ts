@@ -167,7 +167,7 @@ test('bootstrap creates the group schema atomically and repairs only missing doc
     assert.equal(profile.displayName, '');
     assert.equal(profile.timeZone, 'Asia/Ho_Chi_Minh');
     assert.deepEqual(profile.preferredUnits, { weight: 'kg', height: 'cm', water: 'mL' });
-    assert.deepEqual(profile.notificationSettings, { enabled: false, observedDevicePermission: 'not_checked' });
+    assert.deepEqual(profile.notificationSettings, { enabled: false });
     profile.displayName = 'Huy';
     user.dataRevision = 7;
     assert.equal((await request('valid')).status, 200);

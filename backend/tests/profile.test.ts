@@ -46,7 +46,7 @@ test('bootstrap creates the group schema atomically and repairs only missing doc
             const right = value(b.data, b.id, field);
             if (left === null || right === null || left === right) continue;
             const comparison = left < right ? -1 : 1;
-            if (comparison !== 0) return direction === 'desc' ? -comparison : comparison;
+            return direction === 'desc' ? -comparison : comparison;
           }
           return 0;
         });

@@ -9,7 +9,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "test": "tsx --test tests/profile.test.ts tests/f01.account-profile.test.ts"
   },
   "keywords": [],
   "author": "",

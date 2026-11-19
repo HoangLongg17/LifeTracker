@@ -183,7 +183,7 @@ export default function PersonalProfileScreen() {
     const heightOutOfRange = heightChanged
       && (heightCm! * (draft.units.height === 'in' ? 2.54 : 1) < 50
         || heightCm! * (draft.units.height === 'in' ? 2.54 : 1) > 250);
-    const weightOutOfRange = weightChanged && (weightKg! < 20 || weightKg! > 300);
+    const weightOutOfRange = weightChanged && weightKg! > 0 && (weightKg! < 20 || weightKg! > 300);
     return heightOutOfRange || weightOutOfRange;
   }, [draft, profile]);
 

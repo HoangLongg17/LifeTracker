@@ -159,8 +159,7 @@ function validateProfilePatch(input: unknown) {
   if ('heightCm' in input && input.heightCm !== null
       && (typeof input.heightCm !== 'number' || !Number.isFinite(input.heightCm) || input.heightCm <= 0)) {
     errors.heightCm = 'INVALID_HEIGHT';
-  }
-  if ('heightCm' in input && typeof input.heightCm === 'number'
+  } else if ('heightCm' in input && typeof input.heightCm === 'number'
       && (input.heightCm < 50 || input.heightCm > 250)
       && input.warningConfirmed !== true) {
     errors.heightCm = 'WARNING_CONFIRMATION_REQUIRED';

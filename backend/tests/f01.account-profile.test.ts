@@ -115,6 +115,14 @@ test('F01 - Kiểm tra hồ sơ tối thiểu, ca biên dữ liệu, cảnh báo
     assert.equal(negativeHeight.status, 400);
     assert.equal((await negativeHeight.json()).fields.heightCm, 'INVALID_HEIGHT');
 
+    const zeroHeight = await fetch(`${baseUrl}/me/profile`, {
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer token-user-a', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: 1, heightCm: 0 }),
+    });
+    assert.equal(zeroHeight.status, 400);
+    assert.equal((await zeroHeight.json()).fields.heightCm, 'INVALID_HEIGHT');
+
     // 4. Cập nhật birthYear trước, sau đó chuyển sang birthDate -> tự động xóa birthYear cũ
     const setYear = await fetch(`${baseUrl}/me/profile`, {
       method: 'PATCH',

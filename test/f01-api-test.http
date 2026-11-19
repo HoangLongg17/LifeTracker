@@ -1,0 +1,31 @@
+### 1. Từ chối 401 khi gọi /me thiếu Token (TC-F01-07)
+GET http://localhost:3000/me
+
+### 2. Từ chối 401 khi Token không hợp lệ (TC-F01-08)
+GET http://localhost:3000/me/profile
+Authorization: Bearer invalid.jwt.token
+
+### 3. Khởi tạo tài khoản & hồ sơ idempotent (TC-F01-02)
+POST http://localhost:3000/users/bootstrap
+Authorization: Bearer <ID_TOKEN>
+Content-Type: application/json
+
+{}
+
+### 4. Xem hồ sơ cá nhân hiện tại (TC-F01-03)
+GET http://localhost:3000/me/profile
+Authorization: Bearer <ID_TOKEN>
+
+### 5. Cập nhật hồ sơ hợp lệ (TC-F01-04)
+PATCH http://localhost:3000/me/profile
+Authorization: Bearer <ID_TOKEN>
+Content-Type: application/json
+
+{
+  "version": 1,
+  "displayName": "Hoàng Long",
+  "birthDate": "2004-08-20",
+  "heightCm": 172,
+  "activityLevel": "moderate",
+  "timeZone": "Asia/Ho_Chi_Minh"
+}

@@ -1,4 +1,4 @@
-
+import { convertWaterToMl } from '../services/waterUnits';
 import { Router, type Response } from 'express';
 import type { Auth } from 'firebase-admin/auth';
 import {
@@ -63,11 +63,29 @@ function validateWaterBody(
     };
   }
 
-  const allowed = new Set(
+
+    const allowed = new Set(
     mode === 'create'
-      ? ['entryId', 'loggedAt', 'timeZone', 'volumeMl', 'note']
-      : ['version', 'loggedAt', 'timeZone', 'volumeMl', 'note']
-  );
+        ? [
+            'entryId',
+            'loggedAt',
+            'timeZone',
+            'volumeMl',
+            'amount',
+            'unit',
+            'note',
+        ]
+        : [
+            'version',
+            'loggedAt',
+            'timeZone',
+            'volumeMl',
+            'amount',
+            'unit',
+            'note',
+        ]
+    );
+
 
   for (const key of Object.keys(input)) {
     if (!allowed.has(key)) {
@@ -117,17 +135,38 @@ function validateWaterBody(
     }
   }
 
-  if (mode === 'create' || 'volumeMl' in input) {
-    if (
-      typeof input.volumeMl !== 'number' ||
-      !Number.isFinite(input.volumeMl) ||
-      input.volumeMl <= 0
-    ) {
-      errors.volumeMl = 'INVALID_VOLUME';
+
+    const hasAmount = 'amount' in input;
+    const hasUnit = 'unit' in input;
+    const hasVolumeMl = 'volumeMl' in input;
+
+    if (hasAmount || hasUnit) {
+    if (!hasAmount || !hasUnit || hasVolumeMl) {
+        errors.volumeMl = 'AMBIGUOUS_WATER_INPUT';
     } else {
-      fields.volumeMl = input.volumeMl;
+        const converted = convertWaterToMl(
+        input.amount,
+        input.unit
+        );
+
+        if (!converted.ok) {
+        errors.volumeMl = converted.error;
+        } else {
+        fields.volumeMl = converted.volumeMl;
+        }
     }
-  }
+    } else if (mode === 'create' || hasVolumeMl) {
+    if (
+        typeof input.volumeMl !== 'number' ||
+        !Number.isFinite(input.volumeMl) ||
+        input.volumeMl <= 0
+    ) {
+        errors.volumeMl = 'INVALID_VOLUME';
+    } else {
+        fields.volumeMl = input.volumeMl;
+    }
+    }
+
 
   if ('note' in input) {
     if (

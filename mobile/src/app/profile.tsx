@@ -1,3 +1,4 @@
+import { Link } from 'expo-router';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -30,12 +31,16 @@ export default function ProfileScreen() {
         <Text accessibilityRole="header" style={styles.title}>Hồ sơ cá nhân</Text>
 
         <View style={[styles.card, styles.identity]}>
+
           <View style={styles.avatar}>
             <Image source={require('../../assets/images/account/user-round.svg')} style={{ width: 26, height: 26 }} />
           </View>
           <View style={styles.identityText}>
             <Text style={styles.name}>{name}</Text>
             <Text style={styles.email}>{email}</Text>
+                  <Link href="/water">
+        Nhật ký nước uống
+      </Link>
           </View>
         </View>
 

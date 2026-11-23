@@ -1,10 +1,15 @@
 
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import {
+  useLocalSearchParams,
+  usePreventRemove,
+  useRouter,
+} from 'expo-router';
 import type { User } from 'firebase/auth';
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -53,7 +58,7 @@ const C = {
 
 const formatMl = (n: number) =>
   new Intl.NumberFormat('vi-VN', {
-    maximumFractionDigits: 2,
+    maximumFractionDigits: 3,
   }).format(n);
 
 const displayDate = (s: string) => {
@@ -109,39 +114,70 @@ function timeFromIso(value: string) {
   }).format(new Date(value));
 }
 
+/**
+ * Chuẩn hóa chuỗi giờ nhập tự do về dạng HH:mm.
+ * "7:30" → "07:30", "9:05" → "09:05"
+ * Trả về null nếu không hợp lệ.
+ */
+function normalizeTime(raw: string): string | null {
+  const trimmed = raw.trim();
+
+  // Cho phép "H:mm" hoặc "HH:mm"
+  const match = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
+  if (!match) return null;
+
+  const hh = match[1].padStart(2, '0');
+  const mm = match[2];
+
+  const hour = Number(hh);
+  const minute = Number(mm);
+
+  if (hour > 23 || minute > 59) return null;
+
+  return `${hh}:${mm}`;
+}
+
+/**
+ * Chuyển chuỗi nhập thành mL.
+ * Dấu chấm hoặc dấu phẩy đều là dấu thập phân.
+ * Không dùng dấu phân cách hàng nghìn.
+ */
 function toVolumeMl(
   text: string,
   unit: Unit
 ): number | null {
-  const raw = text.trim().replace(/\s/g, '');
+  const raw = text.trim();
 
-  if (!raw) return null;
+  const pattern =
+    unit === 'mL'
+      ? /^\d+([.,]\d{1,3})?$/
+      : /^\d+([.,]\d{1,6})?$/;
 
-  let normalized: string;
-
-  // 11.000 mL = 11000 mL theo cách viết Việt Nam.
-  if (
-    unit === 'mL' &&
-    /^\d{1,3}(\.\d{3})+(,\d+)?$/.test(raw)
-  ) {
-    normalized = raw
-      .replace(/\./g, '')
-      .replace(',', '.');
-  } else if (/^\d+([.,]\d+)?$/.test(raw)) {
-    normalized = raw.replace(',', '.');
-  } else {
+  if (!pattern.test(raw)) {
     return null;
   }
 
-  const value =
-    Number(normalized) *
-    (unit === 'L' ? 1000 : 1);
+  // Dấu chấm và dấu phẩy đều là dấu thập phân.
+  // Không dùng dấu phân cách hàng nghìn trong ô nhập.
+  const amount = Number(raw.replace(',', '.'));
 
-  return Number.isFinite(value) && value > 0
-    ? value
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return null;
+  }
+
+  const volumeMl = unit === 'L'
+    ? amount * 1000
+    : amount;
+
+  return Number.isFinite(volumeMl) && volumeMl > 0
+    ? volumeMl
     : null;
 }
 
+/**
+ * Hiển thị volumeMl theo đơn vị được chọn.
+ * Dùng dấu phẩy làm dấu thập phân (theo locale).
+ */
 function fromVolumeMl(value: number, unit: Unit) {
   return String(
     unit === 'L' ? value / 1000 : value
@@ -187,8 +223,12 @@ function WaterForm({
 
   const edit = !!record;
 
+  // ------------------------------------------------
+  // State – khai báo theo thứ tự, không xáo trộn
+  // ------------------------------------------------
+
   const [amount, setAmount] = useState(() =>
-    record ? String(record.volumeMl) : '250'
+    record ? fromVolumeMl(record.volumeMl, 'mL') : '250'
   );
 
   const [unit, setUnit] = useState<Unit>('mL');
@@ -226,6 +266,91 @@ function WaterForm({
 
   const savingRef = useRef(false);
 
+  // ------------------------------------------------
+  // Quản lý điều hướng và cảnh báo rời form
+  // ------------------------------------------------
+
+  // Lưu giá trị ban đầu để so sánh "dirty"
+  const [initialForm] = useState(() => ({
+    amount: record ? fromVolumeMl(record.volumeMl, 'mL') : '250',
+    unit: 'mL' as Unit,
+    time: record ? timeFromIso(record.loggedAt) : currentTime(),
+    note: record?.note ?? '',
+  }));
+
+  // hasPending = true khi đã gửi một lần chưa rõ kết quả
+  const [hasPending, setHasPending] = useState(false);
+
+  // Kiểm tra dữ liệu có thay đổi so với ban đầu không
+  const isDirty =
+    amount !== initialForm.amount ||
+    unit !== initialForm.unit ||
+    time !== initialForm.time ||
+    note !== initialForm.note;
+
+  // allowExitRef: dùng ref để usePreventRemove callback
+  // đọc được giá trị mới nhất mà không cần re-render.
+  const allowExitRef = useRef(false);
+
+  // Chặn điều hướng nếu dữ liệu bẩn hoặc đang lưu
+  // Dùng state để trigger re-render khi thay đổi
+  const [allowExit, setAllowExit] = useState(false);
+
+  const shouldPreventLeave =
+    !allowExit && (isDirty || saving || hasPending);
+
+  // usePreventRemove phải được gọi vô điều kiện (Rules of Hooks)
+  // Khi lưu thành công, allowExitRef.current = true trước khi gọi repeat()
+  usePreventRemove(shouldPreventLeave, ({ repeat }) => {
+    if (allowExitRef.current) {
+      // Lưu thành công – thực hiện điều hướng ngay
+      repeat();
+      return;
+    }
+
+    Alert.alert(
+      'Bỏ thay đổi?',
+      'Dữ liệu chưa được lưu sẽ mất. Bạn có muốn rời đi không?',
+      [
+        {
+          text: 'Tiếp tục chỉnh sửa',
+          style: 'cancel',
+        },
+        {
+          text: 'Rời đi',
+          style: 'destructive',
+          onPress: () => repeat(),
+        },
+      ]
+    );
+  });
+
+  // Params điều hướng sau khi lưu thành công,
+  // dùng useEffect để không gọi router trong render.
+  const pendingNavRef = useRef<{
+    date: string;
+    edited?: string;
+    savedAmount?: string;
+    savedTime?: string;
+  } | null>(null);
+
+  const [triggerNav, setTriggerNav] = useState(0);
+
+  useEffect(() => {
+    if (triggerNav === 0) return;
+    const route = pendingNavRef.current;
+    if (!route) return;
+
+    router.replace({
+      pathname: '/water',
+      params: route,
+    });
+  }, [triggerNav, router]);
+
+  // ------------------------------------------------
+  // Giá trị tính từ amount + unit
+  // ------------------------------------------------
+
   const volumeMl = toVolumeMl(amount, unit);
 
   const previous = Math.max(
@@ -237,6 +362,10 @@ function WaterForm({
     volumeMl === null
       ? null
       : previous + volumeMl;
+
+  // ------------------------------------------------
+  // Helpers
+  // ------------------------------------------------
 
   // Xóa lỗi khi người dùng thay đổi dữ liệu.
   const changed = () => {
@@ -267,6 +396,14 @@ function WaterForm({
     changed();
   };
 
+  // Chuẩn hóa giờ khi rời ô nhập.
+  const handleTimeBlur = useCallback(() => {
+    const normalized = normalizeTime(time);
+    if (normalized && normalized !== time) {
+      setTime(normalized);
+    }
+  }, [time]);
+
   // ==================================================
   // XỬ LÝ LƯU NƯỚC
   // ==================================================
@@ -290,8 +427,13 @@ function WaterForm({
       return;
     }
 
-    // 2. Kiểm tra thời điểm uống.
-    const iso = dateTimeIso(date, time);
+    // 2. Chuẩn hóa và kiểm tra thời điểm uống.
+    const normalizedTime = normalizeTime(time);
+    if (normalizedTime && normalizedTime !== time) {
+      setTime(normalizedTime);
+    }
+    const timeToSave = normalizedTime ?? time;
+    const iso = dateTimeIso(date, timeToSave);
 
     if (!iso) {
       setTimeError(
@@ -402,11 +544,13 @@ function WaterForm({
           }
         );
       } else {
+        // Gán entryId một lần duy nhất để retry an toàn
         if (!pending.current) {
           pending.current = {
             id: freshEntryId,
             fingerprint,
           };
+          setHasPending(true);
         }
 
         await createWaterEntry(user, {
@@ -415,19 +559,22 @@ function WaterForm({
         });
       }
 
-      // 8. Quay về Nhật ký sau khi lưu.
-      router.replace({
-        pathname: '/water',
-        params: {
-          date,
-          ...(edit
-            ? { edited: '1' }
-            : {
-                savedAmount: String(volumeMl),
-                savedTime: time,
-              }),
-        },
-      });
+      // 8. Đánh dấu cho phép rời form, rồi điều hướng.
+      allowExitRef.current = true;
+      setAllowExit(true);
+
+      pendingNavRef.current = {
+        date,
+        ...(edit
+          ? { edited: '1' }
+          : {
+              savedAmount: String(volumeMl),
+              savedTime: timeToSave,
+            }),
+      };
+
+      // Kích hoạt useEffect điều hướng (không gọi router trong render)
+      setTriggerNav((n) => n + 1);
     } catch (cause) {
       // Phản hồi 4xx là lỗi xác định.
       if (
@@ -436,6 +583,7 @@ function WaterForm({
         cause.status < 500
       ) {
         pending.current = null;
+        setHasPending(false);
       }
 
       setApiError(
@@ -654,6 +802,7 @@ function WaterForm({
                 setTime(value);
                 changed();
               }}
+              onBlur={handleTimeBlur}
               placeholder="HH:mm"
               maxLength={5}
               editable={!saving}
@@ -797,6 +946,8 @@ function FormGate({
   date: string;
   editId?: string;
 }) {
+  const router = useRouter();
+
   const {
     data,
     loading,
@@ -850,6 +1001,39 @@ function FormGate({
         <Text style={s.apiError}>
           Không tìm thấy bản ghi cần sửa.
         </Text>
+      </SafeAreaView>
+    );
+  }
+
+  // Chặn ghi nước ở ngày tương lai (Asia/Ho_Chi_Minh)
+  const today = todayKey();
+  if (!editId && date > today) {
+    return (
+      <SafeAreaView style={s.center}>
+        <Ionicons
+          name="calendar-outline"
+          size={40}
+          color={C.muted}
+        />
+
+        <Text style={s.futureDateTitle}>
+          Không thể ghi nước cho ngày tương lai
+        </Text>
+
+        <Text style={s.futureDateBody}>
+          Ngày {displayDate(date)} chưa tới.
+          Chỉ có thể ghi nước cho hôm nay
+          hoặc ngày đã qua.
+        </Text>
+
+        <Pressable
+          onPress={() => router.back()}
+          style={s.secondary}
+        >
+          <Text style={s.secondaryText}>
+            Quay về Nhật ký
+          </Text>
+        </Pressable>
       </SafeAreaView>
     );
   }
@@ -1181,5 +1365,20 @@ const s = StyleSheet.create({
 
   saving: {
     opacity: 0.65,
+  },
+
+  futureDateTitle: {
+    fontFamily: 'Roboto_700Bold',
+    fontSize: 18,
+    color: C.text,
+    textAlign: 'center',
+  },
+
+  futureDateBody: {
+    fontFamily: 'Roboto_400Regular',
+    fontSize: 14,
+    color: C.muted,
+    textAlign: 'center',
+    lineHeight: 21,
   },
 });

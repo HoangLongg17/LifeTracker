@@ -13,7 +13,7 @@ const columns = {
 
 export function interval(type: TimedLog, id: string, data: DocumentData): SessionInterval {
   const begin = (data[columns[type].begin] as Timestamp).toMillis();
-  const end = data[columns[type].end]?.toMillis() ?? begin + data.durationMinutes * 60000;
+  const end = data[columns[type].end]?.toMillis() ?? begin + Math.round(data.durationMinutes * 60000);
   return { id, begin, end };
 }
 
@@ -21,24 +21,31 @@ function intersects(left: SessionInterval, right: SessionInterval) {
   return left.begin < right.end && right.begin < left.end;
 }
 
-// Each minute belongs to the earliest-starting session covering it, including across assigned dates.
-function contribution(current: SessionInterval, sessions: SessionInterval[]) {
-  let coveredUntil = current.begin;
-  let overlap = false;
-  for (const other of sessions) {
-    if (other.id === current.id || !intersects(current, other)) continue;
-    overlap = true;
-    if (other.begin < current.begin || other.begin === current.begin && other.id < current.id) {
-      coveredUntil = Math.max(coveredUntil, other.end);
-    }
+type Contribution = { countedMinutes: number; overlapStatus: 'needs_review' | 'clear' };
+
+// Each minute belongs to the earliest-starting session covering it, with document ID breaking ties.
+function contributions(sessions: Iterable<SessionInterval>) {
+  const ordered = Array.from(sessions).sort((a, b) => {
+    if (a.begin !== b.begin) return a.begin - b.begin;
+    if (a.id === b.id) return 0;
+    return a.id < b.id ? -1 : 1;
+  });
+  const values = new Map<string, Contribution>();
+  let coveredUntil = -Infinity;
+  for (const [index, current] of ordered.entries()) {
+    const next = ordered[index + 1];
+    const overlaps = coveredUntil > current.begin || (next && next.begin < current.end);
+    values.set(current.id, {
+      countedMinutes: Math.max(0, current.end - Math.max(current.begin, coveredUntil)) / 60000,
+      overlapStatus: overlaps ? 'needs_review' : 'clear',
+    });
+    coveredUntil = Math.max(coveredUntil, current.end);
   }
-  return {
-    countedMinutes: Math.max(0, current.end - coveredUntil) / 60000,
-    overlapStatus: overlap ? 'needs_review' : 'clear',
-  };
+  return values;
 }
 
 async function inRange(tx: Transaction, collection: CollectionReference, type: TimedLog, begin: number, end: number, firstOnly = false) {
+  if (type === 'activity') return activitiesInRange(tx, collection, begin, end);
   const keys = columns[type];
   const afterStart = collection.where(keys.end, '>', Timestamp.fromMillis(begin));
   try {
@@ -61,14 +68,43 @@ function otherType(type: TimedLog): TimedLog {
   return type === 'sleep' ? 'activity' : 'sleep';
 }
 
-async function activityCandidates(tx: Transaction, collection: CollectionReference, begin: number, end: number) {
+async function activitiesInRange(tx: Transaction, collection: CollectionReference, begin: number, end: number) {
   // endedAt is optional on older activity records. Use the longest recorded duration to bound the start-time scan.
   const longest = await tx.get(collection.orderBy('durationMinutes', 'desc').limit(1).select('durationMinutes'));
   if (longest.empty) return [];
   const earliest = begin - Math.ceil(longest.docs[0].get('durationMinutes') * 60_000) - ACTIVITY_END_TOLERANCE_MS;
   let query = collection.where('startedAt', '<', Timestamp.fromMillis(end));
   if (earliest >= Date.parse('0001-01-01T00:00:00Z')) query = query.where('startedAt', '>=', Timestamp.fromMillis(earliest));
-  return (await tx.get(query)).docs;
+  return (await tx.get(query)).docs.filter(doc => interval('activity', doc.id, doc.data()).end > begin);
+}
+
+// Rebuild the requested entries' contributions on read as older records can hold totals calculated without their neighbors.
+export async function activitySummary(tx: Transaction, collection: CollectionReference, records: ReadonlyMap<string, DocumentData>) {
+  const sessions = new Map<string, SessionInterval>();
+  let first = Infinity;
+  let last = -Infinity;
+  let total = 0;
+  for (const [id, data] of records) {
+    if (data.startedAt instanceof Timestamp) {
+      const session = interval('activity', id, data);
+      if (session.end > session.begin) {
+        sessions.set(id, session);
+        first = Math.min(first, session.begin);
+        last = Math.max(last, session.end);
+        continue;
+      }
+    }
+    total += data.countedMinutes ?? 0;
+  }
+  if (sessions.size) {
+    // Other journal dates can cover the same instants. A draft in records supersedes the stored version of its ID.
+    for (const doc of await activitiesInRange(tx, collection, first, last)) {
+      if (!records.has(doc.id)) sessions.set(doc.id, interval('activity', doc.id, doc.data()));
+    }
+  }
+  const entries = contributions(sessions.values());
+  for (const id of records.keys()) total += entries.get(id)?.countedMinutes ?? 0;
+  return { totalMinutes: records.size ? total : null, entries };
 }
 
 // Search by instants across assigned journal dates. Touching endpoints have no overlap.
@@ -79,8 +115,7 @@ export async function findCrossTypeOverlaps(tx: Transaction, collection: Collect
   const otherCollection = collection.parent!.collection(LOG_COLLECTIONS[other]);
   const first = Math.min(...sessions.map(item => item.begin));
   const last = Math.max(...sessions.map(item => item.end));
-  const docs = other === 'activity' ? await activityCandidates(tx, otherCollection, first, last)
-    : await inRange(tx, otherCollection, other, first, last, sessions.length === 1);
+  const docs = await inRange(tx, otherCollection, other, first, last, sessions.length === 1);
   const candidates = docs.map(doc => interval(other, doc.id, doc.data()));
   for (const session of sessions) {
     const conflict = candidates.find(item => intersects(session, item));
@@ -95,7 +130,7 @@ export async function checkCrossTypeOverlap(tx: Transaction, ref: DocumentRefere
   if (conflict) throw new CrossTypeOverlapError(otherType(type), conflict);
 }
 
-export async function intervalChanges(tx: Transaction, ref: DocumentReference, type: TimedLog,
+async function intervalChanges(tx: Transaction, ref: DocumentReference, type: TimedLog,
   before: DocumentData | null, after: DocumentData | null) {
   const changed = [before, after].filter((d): d is DocumentData => d !== null).map(d => interval(type, ref.id, d));
   const affected = new Map<string, DocumentData>();
@@ -122,17 +157,17 @@ export async function intervalChanges(tx: Transaction, ref: DocumentReference, t
   }
   const current = after && interval(type, ref.id, after);
   if (current) surrounding.set(ref.id, current);
-  const sessions = [...surrounding.values()];
+  const values = contributions(surrounding.values());
   const dates = new Map<string, string>();
   const updates = [];
   for (const neighbor of neighbors) {
     const data = affected.get(neighbor.id)!;
-    const next = contribution(neighbor, sessions);
+    const next = values.get(neighbor.id)!;
     if (data.overlapStatus === next.overlapStatus && data.countedMinutes === next.countedMinutes) continue;
-    updates.push({ ref: ref.parent.doc(neighbor.id), values: next, day: data.localDate, delta: next.countedMinutes - (data.countedMinutes ?? 0) });
+    updates.push({ ref: ref.parent.doc(neighbor.id), values: next });
     if (data.localDate !== before?.localDate && data.localDate !== after?.localDate) dates.set(data.localDate, data.timeZone);
   }
-  return { updates, dates, current: current ? contribution(current, sessions) : null };
+  return { updates, dates, current: values.get(ref.id) };
 }
 
 export async function reconcileIntervals(tx: Transaction, ref: DocumentReference, type: LogType,

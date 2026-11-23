@@ -52,7 +52,7 @@ function Editor({ kind, user, boot, reload }: { kind: Kind; user: User; boot: Bo
   const [pending, setPending] = useState<Pending | null>(null);
   const [conflict, setConflict] = useState(false);
   const [completed, setCompleted] = useState<{ date: string; notice: string } | null>(null);
-  const [preview, setPreview] = useState<{ key: string; total: number | null; overlap?: string } | null>(null);
+  const [preview, setPreview] = useState<{ key: string; total: number | null; overlap?: string; activityOverlap?: boolean } | null>(null);
   const [previewAttempt, setPreviewAttempt] = useState(0);
   const saving = useRef(false);
   const alive = useRef(true);
@@ -66,8 +66,12 @@ function Editor({ kind, user, boot, reload }: { kind: Kind; user: User; boot: Bo
     const timer = setTimeout(() => {
       apiRequest(user, '/me/logs/' + kind + '/preview', 'POST', { ...JSON.parse(previewKey), entryId: id })
         .then(result => {
-          const total = (result as { totalMinutes: number })?.totalMinutes;
-          if (active) setPreview({ key: previewKey, total: Number.isFinite(total) ? total : null });
+          const data = result as { totalMinutes?: number; overlapStatus?: string } | null;
+          const total = data?.totalMinutes;
+          if (active) setPreview({
+            key: previewKey, total: typeof total === 'number' && Number.isFinite(total) ? total : null,
+            activityOverlap: data?.overlapStatus === 'needs_review',
+          });
         }).catch(error => {
           if (active) setPreview({ key: previewKey, total: null, overlap: isCrossTypeOverlap(error) ? journalError(error, zone) : undefined });
         });
@@ -124,8 +128,12 @@ function Editor({ kind, user, boot, reload }: { kind: Kind; user: User; boot: Bo
   const startError = submitted ? check.startError : undefined;
   const endError = submitted ? check.endError : undefined;
   const durationError = submitted ? check.durationError : undefined;
-  const total = preview?.key === previewKey ? preview.total : undefined;
-  const overlap = preview?.key === previewKey ? preview.overlap : undefined;
+  const currentPreview = preview?.key === previewKey ? preview : null;
+  const total = currentPreview?.total;
+  const overlap = currentPreview?.overlap;
+  const activityHint = currentPreview?.activityOverlap
+    ? 'Trùng giờ với buổi vận động khác. Phần trùng chỉ tính một lần.'
+    : 'Tổng thời lượng sau khi lưu.';
   const feedback = message || overlap;
   const summary = !check.input ? (kind === 'activity' ? 'Chờ thời lượng hợp lệ.' : 'Chờ hai mốc giờ hợp lệ.')
     : kind === 'sleep' ? durationText(check.minutes!) : overlap ? 'Khung giờ bị trùng' : total === null ? 'Chưa tải được tổng' : total === undefined ? 'Đang tính…' : durationText(total);
@@ -156,7 +164,8 @@ function Editor({ kind, user, boot, reload }: { kind: Kind; user: User; boot: Bo
             setPreview(null);
             setPreviewAttempt(attempt => attempt + 1);
           }}><Text style={j.link}>Tính lại tổng</Text></Pressable>
-        : <Text style={j.small}>{kind === 'activity' ? 'Tổng thời lượng sau khi lưu.' : 'Phiên được ghi vào ngày thức dậy ' + displayDate(check.day!).slice(0, 5) + '.'}</Text>)}
+        : <Text accessibilityLiveRegion="polite" style={[j.small, currentPreview?.activityOverlap && { color: '#865619' }]}>
+          {kind === 'activity' ? activityHint : 'Phiên được ghi vào ngày thức dậy ' + displayDate(check.day!).slice(0, 5) + '.'}</Text>)}
     </View>
     {conflict && <AccountButton outline label="Tải lại bản ghi" onPress={reload} />}
     {dialog && <JournalDialog title={dialog === 'type' ? 'Loại hoạt động' : dialog === 'long' ? 'Xác nhận thời lượng' : 'Bỏ thay đổi?'}

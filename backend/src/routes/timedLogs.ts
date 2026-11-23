@@ -1,10 +1,15 @@
 import { Router, type RequestHandler } from 'express';
-import { AggregateField, FieldPath, Timestamp, type DocumentReference, type Firestore, type Query, type Transaction } from 'firebase-admin/firestore';
+import {
+  AggregateField, FieldPath, Timestamp, type CollectionReference, type DocumentData, type DocumentReference,
+  type Firestore, type Query, type QueryDocumentSnapshot, type Transaction,
+} from 'firebase-admin/firestore';
 import { accessError, getLogCollection, isRecord, localDate, validDay, validEntryId } from '../services/logCommon';
 import { createLog } from '../services/logCreate';
 import { updateLog } from '../services/logUpdate';
 import { deleteLog } from '../services/logDelete';
-import { checkCrossTypeOverlap, CrossTypeOverlapError, findCrossTypeOverlaps, interval, intervalChanges, type TimedLog } from '../services/sessionIntervals';
+import {
+  activitySummary, checkCrossTypeOverlap, CrossTypeOverlapError, findCrossTypeOverlaps, interval, type TimedLog,
+} from '../services/sessionIntervals';
 import { parseTimedLog, TimedLogInputError } from '../services/timedLogInput';
 import { respondWithResult, serialize, storageError } from './logResponse';
 
@@ -26,13 +31,25 @@ async function readAccount(db: Firestore, uid: string, { record, transaction }: 
   return { entry: entry?.data() };
 }
 
-async function dayTotals(tx: Transaction, query: Query) {
+async function activityDay(tx: Transaction, collection: CollectionReference, date: string, options: {
+  completePage?: QueryDocumentSnapshot[];
+  draft?: { id: string; data: DocumentData };
+}) {
+  const rows = options.completePage ?? (await tx.get(collection.where('localDate', '==', date)
+    .select('startedAt', 'endedAt', 'durationMinutes', 'countedMinutes'))).docs;
+  const records = new Map(rows.map(doc => [doc.id, doc.data()]));
+  if (options.draft) records.set(options.draft.id, options.draft.data);
+  return activitySummary(tx, collection, records);
+}
+
+async function sleepDayTotal(tx: Transaction, query: Query) {
   try {
-    return (await tx.get(query.aggregate({ total: AggregateField.sum('countedMinutes'), count: AggregateField.count() }))).data();
+    const stats = (await tx.get(query.aggregate({ total: AggregateField.sum('countedMinutes'), count: AggregateField.count() }))).data();
+    return stats.count ? stats.total : null;
   } catch (error) {
     if (!(error instanceof Error) || !/requires an index|index.*building/i.test(error.message)) throw error;
     const rows = await tx.get(query.select('countedMinutes'));
-    return { total: rows.docs.reduce((sum, doc) => sum + (doc.get('countedMinutes') ?? 0), 0), count: rows.size };
+    return rows.empty ? null : rows.docs.reduce((sum, doc) => sum + (doc.get('countedMinutes') ?? 0), 0);
   }
 }
 
@@ -82,15 +99,18 @@ export function timedLogRouter(type: TimedLog, db: Firestore) {
     let page = all.orderBy(FieldPath.documentId());
     if (cursor) page = page.startAfter(cursor);
     const result = await db.runTransaction(async tx => {
-      const [rows, stats] = await Promise.all([tx.get(page.limit(51)), dayTotals(tx, all)]);
+      const rows = await tx.get(page.limit(51));
       const documents = rows.docs.slice(0, 50);
       const startField = type === 'activity' ? 'startedAt' : 'sleepStart';
       const sessions = documents.filter(doc => doc.get(startField) instanceof Timestamp)
         .map(doc => interval(type, doc.id, doc.data())).filter(session => session.end > session.begin);
-      const conflicts = await findCrossTypeOverlaps(tx, collection, type, sessions);
+      const summary = type === 'activity'
+        ? activityDay(tx, collection, date, { completePage: !cursor && rows.size <= 50 ? documents : undefined })
+        : sleepDayTotal(tx, all).then(totalMinutes => ({ totalMinutes, entries: undefined }));
+      const [stats, conflicts] = await Promise.all([summary, findCrossTypeOverlaps(tx, collection, type, sessions)]);
       return {
-        dateKey: date, totalMinutes: stats.count ? stats.total : null,
-        items: documents.map(doc => serialize({ ...doc.data(), crossTypeOverlap: conflicts.has(doc.id) })),
+        dateKey: date, totalMinutes: stats.totalMinutes,
+        items: documents.map(doc => serialize({ ...doc.data(), ...stats.entries?.get(doc.id), crossTypeOverlap: conflicts.has(doc.id) })),
         nextCursor: rows.size > documents.length ? documents[documents.length - 1].id : null,
       };
     }, { readOnly: true });
@@ -111,12 +131,8 @@ export function timedLogRouter(type: TimedLog, db: Firestore) {
       const after = { ...fields, localDate: day, [eventField]: Timestamp.fromDate(eventAt) };
       await checkCrossTypeOverlap(tx, ref, type, after);
       if (type === 'sleep') return { sessionMinutes: fields.sessionMinutes };
-      const [previous, stats] = await Promise.all([tx.get(ref), dayTotals(tx, collection.where('localDate', '==', day))]);
-      const before = previous.data() ?? null;
-      const changes = await intervalChanges(tx, ref, type, before, after);
-      const delta = changes.updates.filter(item => item.day === day).reduce((sum, item) => sum + item.delta, 0);
-      const totalMinutes = stats.total + (changes.current?.countedMinutes ?? 0) + delta - (before?.localDate === day ? before.countedMinutes : 0);
-      return { totalMinutes };
+      const { totalMinutes, entries } = await activityDay(tx, collection, day, { draft: { id: ref.id, data: after } });
+      return { totalMinutes, overlapStatus: entries.get(ref.id)!.overlapStatus };
     }, { readOnly: true });
     res.json(preview);
   }));
@@ -124,8 +140,13 @@ export function timedLogRouter(type: TimedLog, db: Firestore) {
   router.get('/:id', route(async (req, res) => {
     const uid = res.locals.identity.uid;
     const ref = getLogCollection(db, uid, type).doc(req.params.id as string);
-    const { entry } = await readAccount(db, uid, { record: ref });
-    res.json(serialize(entry));
+    const result = await db.runTransaction(async tx => {
+      const { entry } = await readAccount(db, uid, { record: ref, transaction: tx });
+      if (type !== 'activity') return entry;
+      const summary = await activitySummary(tx, ref.parent, new Map([[ref.id, entry!]]));
+      return { ...entry, ...summary.entries.get(ref.id) };
+    }, { readOnly: true });
+    res.json(serialize(result));
   }));
 
   router.post('/', route(async (req, res) => {

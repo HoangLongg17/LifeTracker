@@ -114,6 +114,65 @@ test('Firestore CRUD, retries, cross-day overlap, preview, stale days and user i
   assert.equal(secondPage.items[0].entryId, 'page-50');
 });
 
+test('activity previews and writes count overlaps with a missing endedAt only once', { skip: !emulator }, async t => {
+  const { account, db, request } = await startJournal(t);
+  const date = '2025-01-01';
+  const logs = account.collection('activityLogs');
+  const first = logs.doc('legacy');
+  const second = logs.doc('later');
+  await first.set({ ...activity, entryId: first.id, userId: account.id, version: 1, localDate: date,
+    startedAt: Timestamp.fromDate(new Date(activity.startedAt)), durationMinutes: 20, countedMinutes: 20, overlapStatus: 'clear' });
+  const draft = { ...activity, entryId: second.id, startedAt: date + 'T09:10:00+07:00', durationMinutes: 20 };
+  const savedFields = async () => (await db.getAll(first, second)).map(doc => [doc.get('countedMinutes'), doc.get('overlapStatus')]);
+
+  assert.deepEqual(await request('activity/preview', 'POST', draft), { status: 200, body: { totalMinutes: 30, overlapStatus: 'needs_review' } });
+  assert.equal((await request('activity?date=' + date)).body.totalMinutes, 20);
+  assert.equal((await second.get()).exists, false);
+  assert.equal((await request('activity', 'POST', draft)).status, 201);
+  assert.equal((await request('activity?date=' + date)).body.totalMinutes, 30);
+  assert.deepEqual(await savedFields(), [[20, 'needs_review'], [10, 'needs_review']]);
+
+  const touching = { ...draft, startedAt: date + 'T09:20:00+07:00' };
+  assert.deepEqual((await request('activity/preview', 'POST', touching)).body, { totalMinutes: 40, overlapStatus: 'clear' });
+  assert.equal((await request('activity/later', 'PATCH', { version: 1, startedAt: touching.startedAt })).status, 200);
+  assert.deepEqual(await savedFields(), [[20, 'clear'], [20, 'clear']]);
+  assert.equal((await request('activity/later', 'PATCH', { version: 2, startedAt: date + 'T08:50:00+07:00' })).status, 200);
+  assert.deepEqual(await savedFields(), [[10, 'needs_review'], [20, 'needs_review']]);
+  assert.equal((await request('activity/later', 'DELETE', { version: 3 })).status, 200);
+  assert.equal((await request('activity?date=' + date)).body.totalMinutes, 20);
+  assert.equal((await first.get()).get('overlapStatus'), 'clear');
+});
+
+test('existing stale activity totals and flags are corrected on read, including across journal dates', { skip: !emulator }, async t => {
+  const { account, request } = await startJournal(t);
+  const logs = account.collection('activityLogs');
+  const first = { ...activity, entryId: 'legacy', localDate: '2025-01-01', userId: account.id, version: 1,
+    durationMinutes: 20, overlapStatus: 'clear', startedAt: Timestamp.fromDate(new Date('2025-01-01T23:50:00+07:00')) };
+  const nextDay = '2025-01-02';
+  await logs.doc(first.entryId).set(first);
+  await logs.doc('later').set({ ...first, entryId: 'later', localDate: nextDay, countedMinutes: 20,
+    startedAt: Timestamp.fromDate(new Date(nextDay + 'T00:00:00+07:00')), endedAt: Timestamp.fromDate(new Date(nextDay + 'T00:20:00+07:00')) });
+
+  for (const [date, expected] of [[first.localDate, 20], [nextDay, 10]] as const) {
+    const day = (await request('activity?date=' + date)).body;
+    assert.equal(day.totalMinutes, expected);
+    assert.equal(day.items.length, 1);
+    assert.equal(day.items[0].countedMinutes, expected);
+    assert.equal(day.items[0].overlapStatus, 'needs_review');
+  }
+  const single = (await request('activity/later')).body;
+  assert.equal(single.countedMinutes, 10);
+  assert.equal(single.overlapStatus, 'needs_review');
+  const separate = { ...activity, entryId: 'extra', startedAt: nextDay + 'T10:00:00+07:00', durationMinutes: 5 };
+  assert.equal((await request('activity/preview', 'POST', separate)).body.totalMinutes, 15);
+  const moved = { ...separate, entryId: first.entryId, startedAt: nextDay + 'T00:20:00+07:00', durationMinutes: 20 };
+  assert.equal((await request('activity/preview', 'POST', moved)).body.totalMinutes, 40);
+  assert.equal((await logs.doc('later').get()).get('countedMinutes'), 20);
+  assert.equal((await request('activity/legacy', 'PATCH', { version: 1, startedAt: moved.startedAt })).status, 200);
+  assert.equal((await request('activity?date=' + nextDay)).body.totalMinutes, 40);
+  assert.equal((await request('activity?date=' + first.localDate)).body.totalMinutes, null);
+});
+
 test('activity preview works before the sleep interval index is ready', { skip: !emulator }, async t => {
   const { account, request } = await startJournal(t);
   const draft = { ...activity, entryId: 'draft', startedAt: '2025-11-23T23:18:00+07:00', durationMinutes: 20 };
@@ -135,10 +194,10 @@ test('activity preview works before the sleep interval index is ready', { skip: 
     return get.call(this, options);
   });
 
-  assert.deepEqual(await request('activity/preview', 'POST', draft), { status: 200, body: { totalMinutes: 20 } });
+  assert.deepEqual(await request('activity/preview', 'POST', draft), { status: 200, body: { totalMinutes: 20, overlapStatus: 'clear' } });
   assert.ok(indexErrors > 0);
   assert.equal((await request('activity', 'POST', { ...draft, entryId: 'saved', startedAt: '2025-11-23T23:10:00+07:00' })).status, 201);
-  assert.deepEqual(await request('activity/preview', 'POST', draft), { status: 200, body: { totalMinutes: 28 } });
+  assert.deepEqual(await request('activity/preview', 'POST', draft), { status: 200, body: { totalMinutes: 28, overlapStatus: 'needs_review' } });
   assert.equal((await request('activity?date=2025-11-23')).body.totalMinutes, 20);
   assert.equal((await request('sleep', 'POST', { ...sleep, sleepStart: '2025-11-23T23:35:00+07:00', sleepEnd: '2025-11-24T06:00:00+07:00' })).status, 201);
   const conflicting = await request('activity/preview', 'POST', draft);

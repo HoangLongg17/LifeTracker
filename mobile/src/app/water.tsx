@@ -36,7 +36,7 @@ const TZ = 'Asia/Ho_Chi_Minh';
 
 const ml = (n: number) =>
   new Intl.NumberFormat('vi-VN', {
-    maximumFractionDigits: 2,
+    maximumFractionDigits: 3,
   }).format(n);
 
 const dateLabel = (s: string) => {
@@ -144,12 +144,17 @@ function WaterJournal({ user }: { user: User }) {
     }, [refresh])
   );
 
-  // Mở màn hình Ghi nước.
-  const goNew = () =>
+  // Ngày tương lai (Asia/Ho_Chi_Minh): so sánh chuỗi YYYY-MM-DD.
+  const isFuture = date > today;
+
+  // Mở màn hình Ghi nước – chặn nếu ngày tương lai.
+  const goNew = () => {
+    if (isFuture) return;
     router.push({
       pathname: '/water/new',
       params: { date },
     });
+  };
 
   // Mở form sửa một lần uống.
   const goEdit = (entryId: string) =>
@@ -387,14 +392,16 @@ function WaterJournal({ user }: { user: User }) {
                   {status}
                 </Text>
 
-                <Pressable
-                  style={s.create}
-                  onPress={goNew}
-                >
-                  <Text style={s.createText}>
-                    + Ghi nước
-                  </Text>
-                </Pressable>
+                {!isFuture && (
+                  <Pressable
+                    style={s.create}
+                    onPress={goNew}
+                  >
+                    <Text style={s.createText}>
+                      + Ghi nước
+                    </Text>
+                  </Pressable>
+                )}
               </View>
             </View>
 
@@ -404,11 +411,13 @@ function WaterJournal({ user }: { user: User }) {
                 Các bản ghi
               </Text>
 
-              <Pressable onPress={goNew}>
-                <Text style={s.addText}>
-                  + Thêm bản ghi
-                </Text>
-              </Pressable>
+              {!isFuture && (
+                <Pressable onPress={goNew}>
+                  <Text style={s.addText}>
+                    + Thêm bản ghi
+                  </Text>
+                </Pressable>
+              )}
             </View>
 
             {data.items.length === 0 ? (

@@ -1,11 +1,12 @@
 import type { User } from 'firebase/auth';
 import { AccountRequestError, apiRequest } from '@/services/session';
+import { wallTime } from '@/utils/journal-time';
 
 export const activities = { walking: 'Đi bộ', running: 'Chạy bộ', cycling: 'Đạp xe', swimming: 'Bơi lội', gym: 'Tập gym', other: 'Khác' };
 export type ActivityType = keyof typeof activities;
 export type Kind = 'activity' | 'sleep';
-type BaseEntry = { entryId: string; localDate: string; timeZone: string; version: number; countedMinutes: number; overlapStatus: 'clear' | 'needs_review' };
-export type ActivityEntry = BaseEntry & { activityType: ActivityType; startedAt: string; endedAt: string; durationMinutes: number };
+type BaseEntry = { entryId: string; localDate: string; timeZone: string; version: number; countedMinutes: number; overlapStatus: 'clear' | 'needs_review'; crossTypeOverlap?: boolean };
+export type ActivityEntry = BaseEntry & { activityType: ActivityType; startedAt: string; endedAt?: string; durationMinutes: number };
 export type SleepEntry = BaseEntry & { sleepStart: string; sleepEnd: string; sessionMinutes: number; awakeMinutes: number | null; subjectiveQuality: number | null };
 type Entries = { activity: ActivityEntry; sleep: SleepEntry };
 export type TimedEntry = Entries[Kind];
@@ -52,8 +53,23 @@ export function deleteTimedEntry(user: User, kind: Kind, id: string, version: nu
   return apiRequest(user, '/me/logs/' + kind + '/' + encodeURIComponent(id), 'DELETE', { version });
 }
 
-export function journalError(error: unknown) {
+export function isCrossTypeOverlap(error: unknown) {
+  return error instanceof AccountRequestError && error.code === 'SLEEP_ACTIVITY_OVERLAP';
+}
+
+export function journalError(error: unknown, zone?: string) {
   if (error instanceof AccountRequestError) {
+    if (isCrossTypeOverlap(error)) {
+      const overlap = (error.body as { overlap?: { kind: Kind; start: string; end: string } } | null)?.overlap;
+      if (zone && overlap && Number.isFinite(Date.parse(overlap.start)) && Number.isFinite(Date.parse(overlap.end))) {
+        const start = wallTime(overlap.start, zone);
+        const end = wallTime(overlap.end, zone);
+        const period = start.time + (start.date === end.date ? '' : ' ngày ' + start.date) + ' đến ' + end.time + ' ngày ' + end.date;
+        const label = overlap.kind === 'sleep' ? 'phiên ngủ' : 'buổi vận động';
+        return 'Trùng với ' + label + ' từ ' + period + '. Hãy điều chỉnh khung giờ.';
+      }
+      return 'Giấc ngủ và vận động trùng thời gian. Hãy điều chỉnh khung giờ.';
+    }
     if (error.status === 409) return 'Bản ghi đã thay đổi. Hãy tải lại trước khi tiếp tục.';
     if (error.code === 'ENTRY_NOT_FOUND') return 'Bản ghi này đã được xóa.';
     if (error.code === 'FUTURE_TIME') return 'Thời điểm ghi nhận không được ở tương lai.';

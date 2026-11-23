@@ -23,7 +23,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AccountBrand, AccountButton } from '@/components/account-ui';
 import { j, JournalDialog } from '@/components/journal-ui';
 import { loadProfile } from '@/services/profile';
-import { dayKey, displayDate, instant, wallTime } from '@/utils/journal-time';
+import { dayKey, displayDate, instant, normalizeTime, wallTime } from '@/utils/journal-time';
 import { useSession } from '@/hooks/use-session';
 import { useWaterDay } from '@/hooks/use-water-day';
 import { AccountRequestError } from '@/services/session';
@@ -60,29 +60,6 @@ const formatMl = (n: number) =>
   new Intl.NumberFormat('vi-VN', {
     maximumFractionDigits: 3,
   }).format(n);
-
-/**
- * Chuẩn hóa chuỗi giờ nhập tự do về dạng HH:mm.
- * "7:30" → "07:30", "9:05" → "09:05"
- * Trả về null nếu không hợp lệ.
- */
-function normalizeTime(raw: string): string | null {
-  const trimmed = raw.trim();
-
-  // Cho phép "H:mm" hoặc "HH:mm"
-  const match = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
-  if (!match) return null;
-
-  const hh = match[1].padStart(2, '0');
-  const mm = match[2];
-
-  const hour = Number(hh);
-  const minute = Number(mm);
-
-  if (hour > 23 || minute > 59) return null;
-
-  return `${hh}:${mm}`;
-}
 
 /**
  * Chuyển chuỗi nhập thành mL.

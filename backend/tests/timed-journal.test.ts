@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { deleteApp, initializeApp } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, Query, Timestamp } from 'firebase-admin/firestore';
 import type { Auth } from 'firebase-admin/auth';
 import { parseTimedLog, TimedLogInputError } from '../src/services/timedLogInput';
 
@@ -33,7 +33,7 @@ test('validates calendar dates, duration, future times and explicit long-session
 });
 
 const emulator = /^(127\.0\.0\.1|localhost):\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST ?? '');
-test('Firestore CRUD, retries, cross-day overlap, preview, stale days and user isolation', { skip: !emulator }, async t => {
+async function startJournal(t: TestContext) {
   const name = randomUUID();
   const firebase = initializeApp({ projectId: 'demo-life-journal' }, name);
   const db = getFirestore(firebase);
@@ -62,6 +62,11 @@ test('Firestore CRUD, retries, cross-day overlap, preview, stale days and user i
       body: input ? JSON.stringify(input) : undefined });
     return { status: response.status, body: await response.json() };
   }
+  return { account, db, request };
+}
+
+test('Firestore CRUD, retries, cross-day overlap, preview, stale days and user isolation', { skip: !emulator }, async t => {
+  const { account, db, request } = await startJournal(t);
   assert.equal((await request('activity?date=2025-01-01', 'GET', undefined, '')).status, 401);
   assert.equal((await request('activity?date=2025-01-01')).body.totalMinutes, null);
   assert.equal((await request('activity', 'POST', activity)).status, 201);
@@ -107,4 +112,96 @@ test('Firestore CRUD, retries, cross-day overlap, preview, stale days and user i
   assert.equal(secondPage.items.length, 2);
   assert.equal(secondPage.nextCursor, null);
   assert.equal(secondPage.items[0].entryId, 'page-50');
+});
+
+test('activity preview works before the sleep interval index is ready', { skip: !emulator }, async t => {
+  const { account, request } = await startJournal(t);
+  const draft = { ...activity, entryId: 'draft', startedAt: '2025-11-23T23:18:00+07:00', durationMinutes: 20 };
+  const start = Date.parse(draft.startedAt);
+  const missingIndex = account.collection('sleepLogs')
+    .where('sleepEnd', '>', Timestamp.fromMillis(start))
+    .where('sleepStart', '<', Timestamp.fromMillis(start + draft.durationMinutes * 60_000))
+    .orderBy('sleepEnd').orderBy('sleepStart').limit(1);
+
+  // The emulator serves every composite query. Fail only this query's RPC to exercise the SDK's real transaction startup.
+  const queries = Query.prototype as unknown as { _get(this: Query, options: unknown): Promise<unknown> };
+  const get = queries._get;
+  let indexErrors = 0;
+  t.mock.method(queries, '_get', async function (this: Query, options: unknown) {
+    if (this.isEqual(missingIndex)) {
+      indexErrors++;
+      throw Object.assign(new Error('The query requires an index.'), { code: 9 });
+    }
+    return get.call(this, options);
+  });
+
+  assert.deepEqual(await request('activity/preview', 'POST', draft), { status: 200, body: { totalMinutes: 20 } });
+  assert.ok(indexErrors > 0);
+  assert.equal((await request('activity', 'POST', { ...draft, entryId: 'saved', startedAt: '2025-11-23T23:10:00+07:00' })).status, 201);
+  assert.deepEqual(await request('activity/preview', 'POST', draft), { status: 200, body: { totalMinutes: 28 } });
+  assert.equal((await request('activity?date=2025-11-23')).body.totalMinutes, 20);
+  assert.equal((await request('sleep', 'POST', { ...sleep, sleepStart: '2025-11-23T23:35:00+07:00', sleepEnd: '2025-11-24T06:00:00+07:00' })).status, 201);
+  const conflicting = await request('activity/preview', 'POST', draft);
+  assert.equal(conflicting.status, 409);
+  assert.equal(conflicting.body.code, 'SLEEP_ACTIVITY_OVERLAP');
+});
+
+test('sleep and activity reject intersecting intervals in either direction, including edits across midnight', { skip: !emulator }, async t => {
+  const { request } = await startJournal(t);
+  const night = { ...sleep, entryId: 'night', sleepStart: '2025-04-01T22:10:00+07:00', sleepEnd: '2025-04-02T06:30:00+07:00' };
+  const walk = { ...activity, entryId: 'night', startedAt: '2025-04-01T22:30:00+07:00', durationMinutes: 20 };
+  const expectOverlap = (response: { status: number; body: unknown }, kind: string, start: string, end: string) => {
+    assert.equal(response.status, 409);
+    assert.deepEqual(response.body, { code: 'SLEEP_ACTIVITY_OVERLAP', overlap: {
+      kind, start: new Date(start).toISOString(), end: new Date(end).toISOString(),
+    } });
+  };
+  assert.equal((await request('sleep', 'POST', night)).status, 201);
+  for (const path of ['activity/preview', 'activity']) {
+    expectOverlap(await request(path, 'POST', walk), 'sleep', night.sleepStart, night.sleepEnd);
+  }
+  assert.equal((await request('activity', 'POST', walk, 'other')).status, 201);
+  assert.equal((await request('activity?date=2025-04-01')).body.totalMinutes, null);
+  const adjoining = { ...walk, startedAt: night.sleepEnd };
+  assert.equal((await request('activity', 'POST', adjoining)).status, 201);
+  const end = '2025-04-02T06:50:00+07:00';
+  const extendSleep = { ...night, entryId: 'second-night', sleepEnd: '2025-04-02T06:40:00+07:00' };
+  for (const path of ['sleep/preview', 'sleep']) {
+    expectOverlap(await request(path, 'POST', extendSleep), 'activity', adjoining.startedAt, end);
+  }
+  expectOverlap(await request('sleep/night', 'PATCH', { version: 1, sleepEnd: extendSleep.sleepEnd }),
+    'activity', adjoining.startedAt, end);
+  expectOverlap(await request('activity/night', 'PATCH', { version: 1, startedAt: '2025-04-02T06:20:00+07:00' }),
+    'sleep', night.sleepStart, night.sleepEnd);
+  assert.equal((await request('sleep/night')).body.version, 1);
+  assert.equal((await request('activity/night')).body.version, 1);
+  assert.equal((await request('sleep', 'POST', night)).body.status, 'existing');
+  assert.equal((await request('activity', 'POST', { ...walk, entryId: 'before', startedAt: '2025-04-01T21:50:00+07:00' })).status, 201);
+  assert.equal((await request('activity/night', 'DELETE', { version: 1 })).status, 200);
+  assert.equal((await request('sleep/night', 'PATCH', { version: 1, sleepEnd: extendSleep.sleepEnd })).status, 200);
+});
+
+test('existing cross-type overlaps are visible on both assigned dates and can be corrected', { skip: !emulator }, async t => {
+  const { account, request } = await startJournal(t);
+  assert.equal((await request('sleep', 'POST', sleep)).status, 201);
+  const legacy = { ...activity, entryId: 'legacy', userId: account.id, localDate: '2025-01-01', version: 1, countedMinutes: 20,
+    startedAt: Timestamp.fromDate(new Date('2025-01-01T23:45:00+07:00')), durationMinutes: 20, overlapStatus: 'clear' };
+  await account.collection('activityLogs').doc(legacy.entryId).set(legacy);
+  const marked = async (kind: string, day: string) => (await request(kind + '?date=' + day)).body.items[0].crossTypeOverlap;
+  assert.equal(await marked('activity', '2025-01-01'), true);
+  assert.equal(await marked('sleep', '2025-01-02'), true);
+  assert.equal((await request('sleep/preview', 'POST', sleep)).body.code, 'SLEEP_ACTIVITY_OVERLAP');
+  assert.equal((await request('activity/legacy', 'PATCH', { version: 1, startedAt: '2025-01-01T22:00:00+07:00' })).status, 200);
+  assert.equal(await marked('activity', '2025-01-01'), false);
+  assert.equal(await marked('sleep', '2025-01-02'), false);
+});
+
+test('simultaneous sleep and activity writes can commit only one of two conflicting intervals', { skip: !emulator }, async t => {
+  const { request } = await startJournal(t);
+  const walk = { ...activity, startedAt: sleep.sleepStart, durationMinutes: 20 };
+  const results = await Promise.all([request('sleep', 'POST', sleep), request('activity', 'POST', walk)]);
+  assert.deepEqual(results.map(r => r.status).sort(), [201, 409]);
+  assert.equal(results.find(r => r.status === 409)?.body.code, 'SLEEP_ACTIVITY_OVERLAP');
+  const stored = await Promise.all([request('sleep?date=2025-01-02'), request('activity?date=2025-01-01')]);
+  assert.equal(stored[0].body.items.length + stored[1].body.items.length, 1);
 });

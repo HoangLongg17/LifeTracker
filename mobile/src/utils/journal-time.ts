@@ -1,5 +1,11 @@
 export type WallTime = { date: string; time: string };
 
+export function normalizeTime(raw: string): string | null {
+  const value = raw.trim();
+  if (!/^(?:[01]?\d|2[0-3]):[0-5]\d$/.test(value)) return null;
+  return value.padStart(5, '0');
+}
+
 export function displayDate(day: string) {
   return day.split('-').reverse().join('/');
 }
@@ -33,13 +39,14 @@ export function wallTime(stamp: string | number, zone: string): WallTime {
 // Verify the result against the profile's IANA time zone, including daylight-saving transitions.
 export function instant(wall: WallTime, zone: string, original?: string) {
   const day = dayKey(wall.date);
-  if (!day || !/^([01]\d|2[0-3]):[0-5]\d$/.test(wall.time)) return null;
+  const time = normalizeTime(wall.time);
+  if (!day || !time) return null;
   const matches = (stamp: string | number) => {
     const local = wallTime(stamp, zone);
-    return dayKey(local.date) === day && local.time === wall.time;
+    return dayKey(local.date) === day && local.time === time;
   };
   if (original && matches(original)) return original;
-  const nominal = Date.parse(day + 'T' + wall.time + ':00Z');
+  const nominal = Date.parse(day + 'T' + time + ':00Z');
   const candidates = new Set<number>();
   for (const delta of [-86400000, 0, 86400000]) {
     const sample = nominal + delta;

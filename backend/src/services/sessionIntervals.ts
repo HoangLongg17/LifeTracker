@@ -1,16 +1,17 @@
 import { FieldValue, Timestamp, type CollectionReference, type DocumentData, type DocumentReference, type Transaction } from 'firebase-admin/firestore';
-import type { LogType } from './logCommon';
+import { LOG_COLLECTIONS, type LogType } from './logCommon';
 import { markSummaryStale } from './logSummary';
 
 export type TimedLog = 'activity' | 'sleep';
 export type SessionInterval = { id: string; begin: number; end: number };
+export const ACTIVITY_END_TOLERANCE_MS = 60_000;
 
 const columns = {
   activity: { begin: 'startedAt', end: 'endedAt' },
   sleep: { begin: 'sleepStart', end: 'sleepEnd' },
 } as const;
 
-function interval(type: TimedLog, id: string, data: DocumentData): SessionInterval {
+export function interval(type: TimedLog, id: string, data: DocumentData): SessionInterval {
   const begin = (data[columns[type].begin] as Timestamp).toMillis();
   const end = data[columns[type].end]?.toMillis() ?? begin + data.durationMinutes * 60000;
   return { id, begin, end };
@@ -37,16 +38,61 @@ function contribution(current: SessionInterval, sessions: SessionInterval[]) {
   };
 }
 
-async function inRange(tx: Transaction, collection: CollectionReference, type: TimedLog, begin: number, end: number) {
+async function inRange(tx: Transaction, collection: CollectionReference, type: TimedLog, begin: number, end: number, firstOnly = false) {
   const keys = columns[type];
   const afterStart = collection.where(keys.end, '>', Timestamp.fromMillis(begin));
   try {
-    return (await tx.get(afterStart.where(keys.begin, '<', Timestamp.fromMillis(end)).orderBy(keys.end).orderBy(keys.begin))).docs;
+    const query = afterStart.where(keys.begin, '<', Timestamp.fromMillis(end)).orderBy(keys.end).orderBy(keys.begin);
+    return (await tx.get(firstOnly ? query.limit(1) : query)).docs;
   } catch (error) {
     // A new environment can serve journals while Firestore builds its composite index.
     if (!(error instanceof Error) || !/requires an index|index.*building/i.test(error.message)) throw error;
     return (await tx.get(afterStart)).docs.filter(doc => doc.get(keys.begin).toMillis() < end);
   }
+}
+
+export class CrossTypeOverlapError extends Error {
+  constructor(readonly conflictingType: TimedLog, readonly conflict: SessionInterval) {
+    super('SLEEP_ACTIVITY_OVERLAP');
+  }
+}
+
+function otherType(type: TimedLog): TimedLog {
+  return type === 'sleep' ? 'activity' : 'sleep';
+}
+
+async function activityCandidates(tx: Transaction, collection: CollectionReference, begin: number, end: number) {
+  // endedAt is optional on older activity records. Use the longest recorded duration to bound the start-time scan.
+  const longest = await tx.get(collection.orderBy('durationMinutes', 'desc').limit(1).select('durationMinutes'));
+  if (longest.empty) return [];
+  const earliest = begin - Math.ceil(longest.docs[0].get('durationMinutes') * 60_000) - ACTIVITY_END_TOLERANCE_MS;
+  let query = collection.where('startedAt', '<', Timestamp.fromMillis(end));
+  if (earliest >= Date.parse('0001-01-01T00:00:00Z')) query = query.where('startedAt', '>=', Timestamp.fromMillis(earliest));
+  return (await tx.get(query)).docs;
+}
+
+// Search by instants across assigned journal dates. Touching endpoints have no overlap.
+export async function findCrossTypeOverlaps(tx: Transaction, collection: CollectionReference, type: TimedLog, sessions: SessionInterval[]) {
+  const conflicts = new Map<string, SessionInterval>();
+  if (!sessions.length) return conflicts;
+  const other = otherType(type);
+  const otherCollection = collection.parent!.collection(LOG_COLLECTIONS[other]);
+  const first = Math.min(...sessions.map(item => item.begin));
+  const last = Math.max(...sessions.map(item => item.end));
+  const docs = other === 'activity' ? await activityCandidates(tx, otherCollection, first, last)
+    : await inRange(tx, otherCollection, other, first, last, sessions.length === 1);
+  const candidates = docs.map(doc => interval(other, doc.id, doc.data()));
+  for (const session of sessions) {
+    const conflict = candidates.find(item => intersects(session, item));
+    if (conflict) conflicts.set(session.id, conflict);
+  }
+  return conflicts;
+}
+
+export async function checkCrossTypeOverlap(tx: Transaction, ref: DocumentReference, type: TimedLog, proposed: DocumentData) {
+  const matches = await findCrossTypeOverlaps(tx, ref.parent, type, [interval(type, ref.id, proposed)]);
+  const conflict = matches.get(ref.id);
+  if (conflict) throw new CrossTypeOverlapError(otherType(type), conflict);
 }
 
 export async function intervalChanges(tx: Transaction, ref: DocumentReference, type: TimedLog,
@@ -92,6 +138,7 @@ export async function intervalChanges(tx: Transaction, ref: DocumentReference, t
 export async function reconcileIntervals(tx: Transaction, ref: DocumentReference, type: LogType,
   before: DocumentData | null, after: DocumentData | null) {
   if (type !== 'activity' && type !== 'sleep') return {};
+  if (after) await checkCrossTypeOverlap(tx, ref, type, after);
   const { updates, dates, current } = await intervalChanges(tx, ref, type, before, after);
   const user = ref.parent.parent!;
   const summaries = await Promise.all([...dates].map(async ([day, zone]) => ({

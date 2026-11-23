@@ -10,7 +10,7 @@ import { activities, deleteTimedEntry, getTimedDay, journalError, type Kind } fr
 import { deleteWaterEntry, getWaterDay, type WaterDayResponse } from '@/services/waterApi';
 import { dayKey, displayDate, durationText, shiftDay, wallTime } from '@/utils/journal-time';
 
-type Row = { kind: Kind | 'water'; id: string; version: number; title: string; detail: string; stamp: string; zone: string; overlap?: boolean };
+type Row = { kind: Kind | 'water'; id: string; version: number; title: string; detail: string; stamp: string; zone: string; overlap?: string };
 type Data = { date: string; today: string; water: WaterDayResponse; rows: Row[]; activity: number | null; sleep: number | null };
 type Params = { date?: string; notice?: string; savedTime?: string; savedAmount?: string; edited?: string };
 
@@ -41,10 +41,12 @@ function Journal({ user }: { user: User }) {
         ...water.items.map(w => ({ kind: 'water' as const, id: w.entryId, version: w.version, title: 'Nước · ' + w.volumeMl.toLocaleString('vi-VN') + ' mL',
           detail: w.note || 'Đã lưu', stamp: w.loggedAt, zone: w.timeZone })),
         ...activity.items.map(a => ({ kind: 'activity' as const, id: a.entryId, version: a.version, title: activities[a.activityType] + ' · ' + durationText(a.durationMinutes),
-          detail: 'Thời lượng tự ghi nhận', stamp: a.startedAt, zone: a.timeZone, overlap: a.overlapStatus === 'needs_review' })),
+          detail: 'Thời lượng tự ghi nhận', stamp: a.startedAt, zone: a.timeZone,
+          overlap: a.crossTypeOverlap ? 'Trùng giờ với giấc ngủ' : a.overlapStatus === 'needs_review' ? 'Trùng giờ · cần xem lại' : undefined })),
         ...sleep.items.map(s => ({ kind: 'sleep' as const, id: s.entryId, version: s.version, title: 'Phiên ngủ · ' + durationText(s.sessionMinutes),
           detail: wallTime(s.sleepStart, s.timeZone).time + ' – ' + wallTime(s.sleepEnd, s.timeZone).time,
-          stamp: s.sleepEnd, zone: s.timeZone, overlap: s.overlapStatus === 'needs_review' })),
+          stamp: s.sleepEnd, zone: s.timeZone,
+          overlap: s.crossTypeOverlap ? 'Trùng giờ với vận động' : s.overlapStatus === 'needs_review' ? 'Trùng giờ · cần xem lại' : undefined })),
       ];
       rows.sort((a, b) => Date.parse(b.stamp) - Date.parse(a.stamp) || a.id.localeCompare(b.id));
       if (active && latestRead.current === revision) setData({ date, today, water, rows, activity: activity.totalMinutes, sleep: sleep.totalMinutes });
@@ -113,7 +115,7 @@ function Journal({ user }: { user: User }) {
         }} style={[j.row, { minHeight: 52 }, i > 0 && j.hairline]}>
           <View style={[j.tile, { width: 34, height: 34 }, row.kind === 'sleep' && { backgroundColor: '#EEEAF4' }]}><JournalIcon name={row.kind} /></View>
           <View style={{ flex: 1 }}><Text style={j.strong}>{row.title}</Text><Text style={j.small}>{row.detail}</Text>
-            {row.overlap && <Text style={[j.small, { color: '#865619' }]}>Trùng giờ · cần xem lại</Text>}</View>
+            {row.overlap && <Text style={[j.small, { color: '#865619' }]}>{row.overlap}</Text>}</View>
           <Text style={j.small}>{wallTime(row.stamp, row.zone).time}</Text>
         </Pressable>) : <Text style={[j.small, { paddingVertical: 14 }]}>Chưa có bản ghi trong ngày này.</Text>}
       </View>

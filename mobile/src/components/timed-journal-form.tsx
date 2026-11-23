@@ -8,9 +8,9 @@ import { FormHeading, j, JournalBack, JournalDialog, JournalIcon, JournalPage } 
 import { useSession } from '@/hooks/use-session';
 import { loadProfile } from '@/services/profile';
 import { AccountRequestError, apiRequest } from '@/services/session';
-import { activities, journalError, readTimedEntry, saveTimedEntry, type ActivityType, type Kind, type TimedEntry, type TimedInput } from '@/services/timed-journal';
+import { activities, isCrossTypeOverlap, journalError, readTimedEntry, saveTimedEntry, type ActivityType, type Kind, type TimedEntry, type TimedInput } from '@/services/timed-journal';
 import { evaluate, initialDraft, type Draft } from '@/utils/journal-form';
-import { dayKey, displayDate, durationText, type WallTime } from '@/utils/journal-time';
+import { dayKey, displayDate, durationText, normalizeTime, type WallTime } from '@/utils/journal-time';
 
 type Boot = { zone: string; entry?: TimedEntry; draft: Draft };
 type Pending = { input: TimedInput; minutes: number };
@@ -27,7 +27,10 @@ function MomentInputs({ label, value, change, locked, activity }: {
   const date = <TextInput key="date" accessibilityLabel={'Ngày ' + label} editable={!locked} placeholder="DD/MM/YYYY" maxLength={10}
     value={value.date} onChangeText={date => change({ ...value, date })} style={[ui.input, { flex: 0, minWidth: 96 }]} />;
   const time = <TextInput key="time" accessibilityLabel={'Giờ ' + label} editable={!locked} placeholder="HH:mm" maxLength={5}
-    value={value.time} onChangeText={time => change({ ...value, time })} style={[ui.input, { flex: 0, minWidth: 52 }]} />;
+    value={value.time} onChangeText={time => change({ ...value, time })} onBlur={() => {
+      const formatted = normalizeTime(value.time);
+      if (formatted && formatted !== value.time) change({ ...value, time: formatted });
+    }} style={[ui.input, { flex: 0, minWidth: 52 }]} />;
   return <>{activity ? time : date}<Text style={j.small}>·</Text>{activity ? date : time}</>;
 }
 function matchesSaved(entry: TimedEntry, input: TimedInput) {
@@ -49,25 +52,28 @@ function Editor({ kind, user, boot, reload }: { kind: Kind; user: User; boot: Bo
   const [pending, setPending] = useState<Pending | null>(null);
   const [conflict, setConflict] = useState(false);
   const [completed, setCompleted] = useState<{ date: string; notice: string } | null>(null);
-  const [preview, setPreview] = useState<{ key: string; total: number | null } | null>(null);
+  const [preview, setPreview] = useState<{ key: string; total: number | null; overlap?: string } | null>(null);
+  const [previewAttempt, setPreviewAttempt] = useState(0);
   const saving = useRef(false);
   const alive = useRef(true);
   const leave = useRef<() => void>(() => {});
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const check = useMemo(() => evaluate(kind, draft, zone, entry), [kind, draft, zone, entry]);
-  const previewKey = kind === 'activity' && check.input ? JSON.stringify(check.input) : '';
+  const previewKey = check.input ? JSON.stringify(check.input) : '';
   useEffect(() => {
     if (!previewKey) return;
     let active = true;
     const timer = setTimeout(() => {
-      apiRequest(user, '/me/logs/activity/preview', 'POST', { ...JSON.parse(previewKey), entryId: id })
+      apiRequest(user, '/me/logs/' + kind + '/preview', 'POST', { ...JSON.parse(previewKey), entryId: id })
         .then(result => {
           const total = (result as { totalMinutes: number })?.totalMinutes;
           if (active) setPreview({ key: previewKey, total: Number.isFinite(total) ? total : null });
-        }).catch(() => { if (active) setPreview({ key: previewKey, total: null }); });
+        }).catch(error => {
+          if (active) setPreview({ key: previewKey, total: null, overlap: isCrossTypeOverlap(error) ? journalError(error, zone) : undefined });
+        });
     }, 250);
     return () => { active = false; clearTimeout(timer); };
-  }, [user, id, previewKey]);
+  }, [user, id, kind, zone, previewKey, previewAttempt]);
   const dirty = JSON.stringify(draft) !== JSON.stringify(boot.draft);
   usePreventRemove(!completed && (dirty || !!pending || busy), ({ repeat }) => {
     if (saving.current) return;
@@ -106,7 +112,9 @@ function Editor({ kind, user, boot, reload }: { kind: Kind; user: User; boot: Bo
             if (alive.current) setMessage('Chưa kiểm tra được lần lưu trước. Hãy thử lại.'); return;
           }
         }
-        setPending(null); setConflict(err.status === 409 || err.code === 'ENTRY_NOT_FOUND'); setMessage(journalError(err));
+        setPending(null);
+        setConflict((err.status === 409 && !isCrossTypeOverlap(err)) || err.code === 'ENTRY_NOT_FOUND');
+        setMessage(journalError(err, zone));
       } else {
         setPending(item); setMessage('Chưa xác nhận được kết quả lưu. Hãy thử lưu lại để kiểm tra cùng bản ghi.');
       }
@@ -117,11 +125,14 @@ function Editor({ kind, user, boot, reload }: { kind: Kind; user: User; boot: Bo
   const endError = submitted ? check.endError : undefined;
   const durationError = submitted ? check.durationError : undefined;
   const total = preview?.key === previewKey ? preview.total : undefined;
+  const overlap = preview?.key === previewKey ? preview.overlap : undefined;
+  const feedback = message || overlap;
   const summary = !check.input ? (kind === 'activity' ? 'Chờ thời lượng hợp lệ.' : 'Chờ hai mốc giờ hợp lệ.')
-    : kind === 'sleep' ? durationText(check.minutes!) : total === null ? 'Chưa tải được tổng' : total === undefined ? 'Đang tính…' : durationText(total);
+    : kind === 'sleep' ? durationText(check.minutes!) : overlap ? 'Khung giờ bị trùng' : total === null ? 'Chưa tải được tổng' : total === undefined ? 'Đang tính…' : durationText(total);
   const label = kind === 'sleep' ? 'Thời lượng phiên' : durationError ? 'Thời lượng đã ghi' : 'Vận động trong ngày';
 
-  return <JournalPage footer={<AccountButton label={pending ? 'Thử lưu lại' : 'Lưu vào nhật ký'} busy={busy} disabled={conflict || (submitted && !check.input)} onPress={() => save()} />}>
+  return <JournalPage footer={<View style={{ gap: 8 }}>{!!feedback && <ErrorMessage message={feedback} />}
+    <AccountButton label={pending ? 'Thử lưu lại' : 'Lưu vào nhật ký'} busy={busy} disabled={conflict || (submitted && !check.input)} onPress={() => save()} /></View>}>
     <JournalBack /><FormHeading title={(entry ? 'Sửa ' : 'Ghi ') + names[kind]} date={(kind === 'activity' ? draft.start : draft.end).date} />
     <View style={{ gap: 22, marginTop: 32 }}>
       {kind === 'activity' && <Field name="Loại hoạt động"><JournalIcon name="activity" size={17} />
@@ -140,9 +151,14 @@ function Editor({ kind, user, boot, reload }: { kind: Kind; user: User; boot: Bo
     <View style={[j.card, { marginTop: kind === 'activity' ? 48 : 69, minHeight: 123, justifyContent: 'space-between' }]}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><JournalIcon name={kind} size={17} /><Text style={j.strong}>{label}</Text></View>
       <Text style={[j.heading, { fontSize: check.input ? 24 : 17, marginTop: 0 }]}>{summary}</Text>
-      {check.input && <Text style={j.small}>{kind === 'activity' ? 'Tổng thời lượng sau khi lưu.' : 'Phiên được ghi vào ngày thức dậy ' + displayDate(check.day!).slice(0, 5) + '.'}</Text>}
+      {check.input && !overlap && (kind === 'activity' && total === null
+        ? <Pressable accessibilityRole="button" style={j.linkRow} disabled={locked} onPress={() => {
+            setPreview(null);
+            setPreviewAttempt(attempt => attempt + 1);
+          }}><Text style={j.link}>Tính lại tổng</Text></Pressable>
+        : <Text style={j.small}>{kind === 'activity' ? 'Tổng thời lượng sau khi lưu.' : 'Phiên được ghi vào ngày thức dậy ' + displayDate(check.day!).slice(0, 5) + '.'}</Text>)}
     </View>
-    {!!message && <ErrorMessage message={message} />}{conflict && <AccountButton outline label="Tải lại bản ghi" onPress={reload} />}
+    {conflict && <AccountButton outline label="Tải lại bản ghi" onPress={reload} />}
     {dialog && <JournalDialog title={dialog === 'type' ? 'Loại hoạt động' : dialog === 'long' ? 'Xác nhận thời lượng' : 'Bỏ thay đổi?'}
       onClose={() => setDialog(null)}>
       {dialog === 'type' ? (Object.keys(activities) as ActivityType[]).map(type =>

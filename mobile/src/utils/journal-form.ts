@@ -10,7 +10,8 @@ export function initialDraft(kind: Kind, date: string | null, zone: string, entr
   if (date && date !== dayKey(end.date)) end = { date: displayDate(date), time: kind === 'sleep' ? '07:00' : '14:20' };
   const endMs = Date.parse(instant(end, zone) ?? new Date(now).toISOString());
   if (entry && 'startedAt' in entry) return { activity: entry.activityType, start: wallTime(entry.startedAt, zone),
-    end: wallTime(entry.endedAt, zone), duration: String(entry.durationMinutes).replace('.', ',') };
+    end: wallTime(entry.endedAt ?? Date.parse(entry.startedAt) + entry.durationMinutes * 60_000, zone),
+    duration: String(entry.durationMinutes).replace('.', ',') };
   if (entry && 'sleepStart' in entry) return { activity: 'walking', start: wallTime(entry.sleepStart, zone),
     end: wallTime(entry.sleepEnd, zone), duration: '' };
   return { activity: 'walking', start: wallTime(endMs - (kind === 'sleep' ? 30 : 20) * 60000, zone), end, duration: '20' };

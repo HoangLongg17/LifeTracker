@@ -1,6 +1,6 @@
 import { Timestamp, type DocumentData } from 'firebase-admin/firestore';
 import { isRecord, validDay, validTimeZone } from './logCommon';
-import type { TimedLog } from './sessionIntervals';
+import { ACTIVITY_END_TOLERANCE_MS, type TimedLog } from './sessionIntervals';
 
 const activityTypes = ['walking', 'running', 'cycling', 'swimming', 'gym', 'other'];
 export class TimedLogInputError extends Error {
@@ -49,7 +49,7 @@ export function parseTimedLog(type: TimedLog, input: unknown, existing?: Documen
     const end = 'endedAt' in input ? parseTime(input.endedAt, 'endedAt', now)
       : existing?.endedAt && !('durationMinutes' in input || 'startedAt' in input) ? (existing.endedAt as Timestamp).toDate()
       : new Date(computedEnd);
-    if (end <= start || Math.abs(end.getTime() - computedEnd) > 60000) invalid('endedAt', 'DURATION_MISMATCH');
+    if (end <= start || Math.abs(end.getTime() - computedEnd) > ACTIVITY_END_TOLERANCE_MS) invalid('endedAt', 'DURATION_MISMATCH');
     if (end.getTime() > now + 300000) invalid('durationMinutes', 'FUTURE_TIME');
     eventAt = start;
     Object.assign(values, { activityType: data.activityType, durationMinutes: minutes, endedAt: Timestamp.fromDate(end) });

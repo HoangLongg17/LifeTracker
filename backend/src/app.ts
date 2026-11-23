@@ -1,3 +1,4 @@
+import { logsRouter } from './routes/logs';
 import { getApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { profileRouter } from "./routes/profile";
@@ -26,6 +27,7 @@ if (process.env.NODE_ENV === "development") {
   }));
 }
 app.use(profileRouter(getAuth(), db));
+app.use(logsRouter(getAuth(), db));
 
 // Kiểm tra trạng thái Backend
 app.get("/health", (_req, res) => {

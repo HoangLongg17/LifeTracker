@@ -1,3 +1,4 @@
+import { reconcileIntervals } from './sessionIntervals';
 import { markSummaryStale } from './logSummary';
 import {
   FieldValue,
@@ -217,7 +218,9 @@ export async function updateLog(input: UpdateLogInput) {
     }
 
     // 6. Cập nhật nhật ký.
-    transaction.update(logRef, changes);
+    const before = existing.data()!;
+    const derived = await reconcileIntervals(transaction, logRef, type, before, { ...before, ...changes });
+    transaction.update(logRef, { ...changes, ...derived });
     // 7. Đánh dấu ngày cũ cần tính lại.
 markSummaryStale(
   transaction,

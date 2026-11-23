@@ -9,7 +9,6 @@ import type { User } from 'firebase/auth';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -21,7 +20,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AccountBrand } from '@/components/account-ui';
+import { AccountBrand, AccountButton } from '@/components/account-ui';
+import { j, JournalDialog } from '@/components/journal-ui';
+import { loadProfile } from '@/services/profile';
+import { dayKey, displayDate, instant, wallTime } from '@/utils/journal-time';
 import { useSession } from '@/hooks/use-session';
 import { useWaterDay } from '@/hooks/use-water-day';
 import { AccountRequestError } from '@/services/session';
@@ -42,8 +44,6 @@ type EditableWater = {
   note: string | null;
 };
 
-const TZ = 'Asia/Ho_Chi_Minh';
-
 const C = {
   bg: '#F8F8F1',
   text: '#19342C',
@@ -60,59 +60,6 @@ const formatMl = (n: number) =>
   new Intl.NumberFormat('vi-VN', {
     maximumFractionDigits: 3,
   }).format(n);
-
-const displayDate = (s: string) => {
-  const [y, m, d] = s.split('-');
-  return `${d}/${m}/${y}`;
-};
-
-function todayKey() {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: TZ,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date());
-
-  const part = (key: string) =>
-    parts.find((p) => p.type === key)?.value ?? '';
-
-  return `${part('year')}-${part('month')}-${part('day')}`;
-}
-
-function isDateKey(s: unknown): s is string {
-  if (
-    typeof s !== 'string' ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(s)
-  ) {
-    return false;
-  }
-
-  const d = new Date(`${s}T12:00:00Z`);
-
-  return (
-    !Number.isNaN(d.getTime()) &&
-    d.toISOString().slice(0, 10) === s
-  );
-}
-
-function currentTime() {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone: TZ,
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).format(new Date());
-}
-
-function timeFromIso(value: string) {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone: TZ,
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).format(new Date(value));
-}
 
 /**
  * Chuẩn hóa chuỗi giờ nhập tự do về dạng HH:mm.
@@ -184,26 +131,6 @@ function fromVolumeMl(value: number, unit: Unit) {
   ).replace('.', ',');
 }
 
-function dateTimeIso(
-  day: string,
-  hhmm: string
-): string | null {
-  if (
-    !isDateKey(day) ||
-    !/^([01]\d|2[0-3]):[0-5]\d$/.test(hhmm)
-  ) {
-    return null;
-  }
-
-  const date = new Date(
-    `${day}T${hhmm}:00+07:00`
-  );
-
-  return Number.isNaN(date.getTime())
-    ? null
-    : date.toISOString();
-}
-
 // ==================================================
 // BIỂU MẪU THÊM / SỬA NƯỚC UỐNG
 // ==================================================
@@ -213,11 +140,13 @@ function WaterForm({
   date,
   record,
   dayTotal,
+  timeZone,
 }: {
   user: User;
   date: string;
   record?: EditableWater;
   dayTotal: number | null;
+  timeZone: string;
 }) {
   const router = useRouter();
 
@@ -235,8 +164,8 @@ function WaterForm({
 
   const [time, setTime] = useState(() =>
     record
-      ? timeFromIso(record.loggedAt)
-      : currentTime()
+      ? wallTime(record.loggedAt, timeZone).time
+      : wallTime(Date.now(), timeZone).time
   );
 
   const [note, setNote] = useState(
@@ -274,7 +203,7 @@ function WaterForm({
   const [initialForm] = useState(() => ({
     amount: record ? fromVolumeMl(record.volumeMl, 'mL') : '250',
     unit: 'mL' as Unit,
-    time: record ? timeFromIso(record.loggedAt) : currentTime(),
+    time,
     note: record?.note ?? '',
   }));
 
@@ -296,6 +225,8 @@ function WaterForm({
   // Dùng state để trigger re-render khi thay đổi
   const [allowExit, setAllowExit] = useState(false);
 
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const leaveAction = useRef<() => void>(() => {});
   const shouldPreventLeave =
     !allowExit && (isDirty || saving || hasPending);
 
@@ -308,21 +239,9 @@ function WaterForm({
       return;
     }
 
-    Alert.alert(
-      'Bỏ thay đổi?',
-      'Dữ liệu chưa được lưu sẽ mất. Bạn có muốn rời đi không?',
-      [
-        {
-          text: 'Tiếp tục chỉnh sửa',
-          style: 'cancel',
-        },
-        {
-          text: 'Rời đi',
-          style: 'destructive',
-          onPress: () => repeat(),
-        },
-      ]
-    );
+    if (savingRef.current) return;
+    leaveAction.current = repeat;
+    setConfirmLeave(true);
   });
 
   // Params điều hướng sau khi lưu thành công,
@@ -341,9 +260,9 @@ function WaterForm({
     const route = pendingNavRef.current;
     if (!route) return;
 
-    router.replace({
-      pathname: '/water',
-      params: route,
+    router.dismissTo({
+      pathname: '/journal',
+      params: { notice: '', savedTime: '', savedAmount: '', edited: '', ...route },
     });
   }, [triggerNav, router]);
 
@@ -433,7 +352,7 @@ function WaterForm({
       setTime(normalizedTime);
     }
     const timeToSave = normalizedTime ?? time;
-    const iso = dateTimeIso(date, timeToSave);
+    const iso = instant({ date, time: timeToSave }, timeZone, record?.loggedAt);
 
     if (!iso) {
       setTimeError(
@@ -464,7 +383,7 @@ function WaterForm({
       amount: amountValue,
       unit,
       loggedAt: iso,
-      timeZone: TZ,
+      timeZone,
       note: trimNote,
     };
 
@@ -627,6 +546,8 @@ function WaterForm({
           {/* NÚT QUAY LẠI */}
           <Pressable
             style={s.back}
+            accessibilityRole="button"
+            accessibilityLabel="Quay lại"
             onPress={() => router.back()}
           >
             <Ionicons
@@ -892,6 +813,7 @@ function WaterForm({
 
           <Pressable
             disabled={saving}
+            accessibilityRole="button"
             style={[
               s.saveButton,
               saving && s.saving,
@@ -929,6 +851,11 @@ function WaterForm({
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+      {confirmLeave && <JournalDialog title="Bỏ thay đổi?" onClose={() => setConfirmLeave(false)}>
+        <Text style={j.text}>Dữ liệu chưa được lưu sẽ mất. Bạn có muốn rời đi không?</Text>
+        <AccountButton label="Rời đi" onPress={() => { setConfirmLeave(false); leaveAction.current(); }} />
+        <AccountButton label="Tiếp tục chỉnh sửa" outline onPress={() => setConfirmLeave(false)} />
+      </JournalDialog>}
     </SafeAreaView>
   );
 }
@@ -941,7 +868,11 @@ function FormGate({
   user,
   date,
   editId,
+  timeZone,
+  today,
 }: {
+  today: string;
+  timeZone: string;
   user: User;
   date: string;
   editId?: string;
@@ -1005,8 +936,6 @@ function FormGate({
     );
   }
 
-  // Chặn ghi nước ở ngày tương lai (Asia/Ho_Chi_Minh)
-  const today = todayKey();
   if (!editId && date > today) {
     return (
       <SafeAreaView style={s.center}>
@@ -1045,6 +974,7 @@ function FormGate({
       date={date}
       record={record}
       dayTotal={data.totalWaterMl}
+      timeZone={record?.timeZone ?? timeZone}
     />
   );
 }
@@ -1053,32 +983,31 @@ function FormGate({
 // MÀN HÌNH CHÍNH
 // ==================================================
 
+function WaterRoute({ user, date, editId }: { user: User; date?: string; editId?: string }) {
+  const [calendar, setCalendar] = useState<{ zone: string; today: string } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    loadProfile(user).then(profile => {
+      if (active) setCalendar({ zone: profile.timeZone, today: dayKey(wallTime(Date.now(), profile.timeZone).date)! });
+    })
+      .catch(() => { if (active) setFailed(true); });
+    return () => { active = false; };
+  }, [user, attempt]);
+  if (!calendar) return <SafeAreaView style={s.center}>
+    {failed ? <><Text style={s.apiError}>Chưa tải được múi giờ của hồ sơ.</Text>
+      <AccountButton outline label="Thử lại" onPress={() => { setFailed(false); setAttempt(n => n + 1); }} /></> :
+      <ActivityIndicator color={C.green} accessibilityLabel="Đang tải nhật ký nước" />}
+  </SafeAreaView>;
+  const day = dayKey(date ?? '') ?? calendar.today;
+  return <FormGate key={[day, editId].join('/')} user={user} date={day} editId={editId} timeZone={calendar.zone} today={calendar.today} />;
+}
+
 export default function NewWaterScreen() {
   const { session } = useSession();
-
-  const params = useLocalSearchParams<{
-    date?: string;
-    editId?: string;
-  }>();
-
-  const [defaultDate] = useState(todayKey);
-
-  const date = isDateKey(params.date)
-    ? params.date
-    : defaultDate;
-
-  if (session.status !== 'active') {
-    return null;
-  }
-
-  return (
-    <FormGate
-      key={`${session.user.uid}:${date}:${params.editId ?? ''}`}
-      user={session.user}
-      date={date}
-      editId={params.editId}
-    />
-  );
+  const { date, editId } = useLocalSearchParams<{ date?: string; editId?: string }>();
+  return session.status === 'active' ? <WaterRoute key={session.user.uid} user={session.user} date={date} editId={editId} /> : null;
 }
 
 // ==================================================

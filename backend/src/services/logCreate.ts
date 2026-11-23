@@ -1,3 +1,4 @@
+import { reconcileIntervals } from './sessionIntervals';
 import { markSummaryStale } from './logSummary';
 import { createHash } from 'node:crypto';
 import {
@@ -204,7 +205,7 @@ export async function createLog(input: CreateLogInput) {
     const timestamp = FieldValue.serverTimestamp();
 
     // Chỉ tạo document nếu entryId chưa tồn tại.
-    transaction.create(logRef, {
+    const record = {
       ...fields,
       entryId,
       userId: uid,
@@ -216,7 +217,9 @@ export async function createLog(input: CreateLogInput) {
       requestFingerprint,
       createdAt: timestamp,
       updatedAt: timestamp,
-    });
+    };
+    const derived = await reconcileIntervals(transaction, logRef, type, null, record);
+    transaction.create(logRef, { ...record, ...derived });
 
 // Đánh dấu tổng hợp cần tính lại,
 // kể cả khi chưa có document dailySummaries.

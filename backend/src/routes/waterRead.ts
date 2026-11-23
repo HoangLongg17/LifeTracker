@@ -10,27 +10,8 @@ import { verifyAccount } from '../middlewares/verifyAccount';
 import {
   accessError,
   getLogCollection,
+  validDay,
 } from '../services/logCommon';
-
-function isValidDateKey(
-  value: unknown
-): value is string {
-  if (
-    typeof value !== 'string' ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(value)
-  ) {
-    return false;
-  }
-
-  const date = new Date(
-    `${value}T00:00:00.000Z`
-  );
-
-  return (
-    Number.isFinite(date.getTime()) &&
-    date.toISOString().slice(0, 10) === value
-  );
-}
 
 export function waterReadRouter(
   auth: Pick<Auth, 'verifyIdToken'>,
@@ -52,7 +33,7 @@ export function waterReadRouter(
         ? rawQuery.date
         : undefined;
 
-    if (!isValidDateKey(dateKey)) {
+    if (!validDay(dateKey)) {
     res.status(400).json({
         code: 'INVALID_DATE',
     });

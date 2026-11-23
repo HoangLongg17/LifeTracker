@@ -2,6 +2,38 @@
 {
   "indexes": [
     {
+      "collectionGroup": "activityLogs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "localDate", "order": "ASCENDING" },
+        { "fieldPath": "countedMinutes", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sleepLogs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "localDate", "order": "ASCENDING" },
+        { "fieldPath": "countedMinutes", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "activityLogs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "endedAt", "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sleepLogs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sleepEnd", "order": "ASCENDING" },
+        { "fieldPath": "sleepStart", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "weightLogs",
       "queryScope": "COLLECTION",
       "fields": [

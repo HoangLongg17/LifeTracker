@@ -38,6 +38,8 @@ function Navigation() {
         <Stack.Protected guard={signedIn}>
           <Stack.Screen name="profile" />
           <Stack.Screen name="personal-profile" />
+          <Stack.Screen name="water" />
+          <Stack.Screen name="water/new" />
         </Stack.Protected>
       </Stack>
     </ThemeProvider>

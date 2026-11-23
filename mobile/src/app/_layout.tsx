@@ -36,6 +36,10 @@ function Navigation() {
           <Stack.Screen name="register" />
         </Stack.Protected>
         <Stack.Protected guard={signedIn}>
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="journal-add" />
+          <Stack.Screen name="activity" />
+          <Stack.Screen name="sleep" />
           <Stack.Screen name="profile" />
           <Stack.Screen name="personal-profile" />
           <Stack.Screen name="water" />

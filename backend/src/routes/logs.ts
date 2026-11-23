@@ -1,11 +1,12 @@
 import { convertWaterToMl } from '../services/waterUnits';
-import { Router, type Response } from 'express';
+import { Router } from 'express';
 import type { Auth } from 'firebase-admin/auth';
 import {
-  Timestamp,
   type Firestore,
 } from 'firebase-admin/firestore';
 
+import { respondWithResult, serialize, storageError } from './logResponse';
+import { timedLogRouter } from './timedLogs';
 import { verifyAccount } from '../middlewares/verifyAccount';
 import {
   accessError,
@@ -202,64 +203,6 @@ function validateWaterBody(
   };
 }
 
-function respondWithResult(
-  res: Response,
-  result: { status: string }
-): void {
-  const statusCodes: Record<string, number> = {
-    created: 201,
-    existing: 200,
-    updated: 200,
-    deleted: 200,
-    ENTRY_ID_CONFLICT: 409,
-    ENTRY_ALREADY_DELETED: 409,
-    VERSION_CONFLICT: 409,
-    ENTRY_NOT_FOUND: 404,
-    ACCOUNT_NOT_INITIALIZED: 404,
-    ACCOUNT_DELETING: 403,
-    ACCOUNT_DISABLED: 403,
-  };
-
-  res.status(statusCodes[result.status] ?? 500).json(result);
-}
-
-function storageError(
-  res: Response,
-  operation: string,
-  error: unknown
-): void {
-  console.error(`[logs] ${operation} failed`, {
-    code:
-      isRecord(error) && 'code' in error
-        ? String(error.code)
-        : 'UNKNOWN',
-  });
-
-  res.status(503).json({
-    code: 'LOG_UNAVAILABLE',
-  });
-}
-
-function serialize(value: unknown): unknown {
-  if (value instanceof Timestamp) {
-    return value.toDate().toISOString();
-  }
-
-  if (Array.isArray(value)) {
-    return value.map(serialize);
-  }
-
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([key]) => key !== 'requestFingerprint')
-        .map(([key, item]) => [key, serialize(item)])
-    );
-  }
-
-  return value;
-}
-
 export function logsRouter(
   auth: Pick<Auth, 'verifyIdToken'>,
   db: Firestore
@@ -268,6 +211,9 @@ export function logsRouter(
 
   // Mọi endpoint phía dưới đều phải xác thực.
   router.use('/me/logs', verifyAccount(auth));
+
+  router.use('/me/logs/activity', timedLogRouter('activity', db));
+  router.use('/me/logs/sleep', timedLogRouter('sleep', db));
 
   // TẠO NHẬT KÝ NƯỚC
   router.post('/me/logs/water', async (req, res) => {

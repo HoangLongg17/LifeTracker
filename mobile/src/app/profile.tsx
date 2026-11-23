@@ -1,4 +1,3 @@
-import { Link } from 'expo-router';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -6,6 +5,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { accountStyles as ui, colors, SignOutButton } from '@/components/account-ui';
+import { JournalBack } from '@/components/journal-ui';
 import { useSession } from '@/hooks/use-session';
 
 const settings = [
@@ -27,6 +27,7 @@ export default function ProfileScreen() {
       <ScrollView contentContainerStyle={[ui.content, {
         paddingTop: Math.max(insets.top, 32) + 16, paddingBottom: Math.max(insets.bottom, 24),
       }]}>
+        <JournalBack onPress={() => router.canGoBack() ? router.back() : router.replace('/today')} />
         <Text style={styles.eyebrow}>Tài khoản</Text>
         <Text accessibilityRole="header" style={styles.title}>Hồ sơ cá nhân</Text>
 
@@ -38,9 +39,6 @@ export default function ProfileScreen() {
           <View style={styles.identityText}>
             <Text style={styles.name}>{name}</Text>
             <Text style={styles.email}>{email}</Text>
-                  <Link href="/water">
-        Nhật ký nước uống
-      </Link>
           </View>
         </View>
 

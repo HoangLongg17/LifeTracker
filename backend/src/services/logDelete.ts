@@ -1,3 +1,4 @@
+import { reconcileIntervals } from './sessionIntervals';
 
 import {
   FieldValue,
@@ -125,6 +126,7 @@ export async function deleteLog(input: DeleteLogInput) {
 
     // Firestore Transaction phải đọc trước khi ghi.
     const summary = await transaction.get(summaryRef);
+    await reconcileIntervals(transaction, logRef, type, existing.data()!, null);
 // 8. Lưu dấu vết entryId đã bị xóa.
 transaction.create(tombstoneRef, {
   entryId,

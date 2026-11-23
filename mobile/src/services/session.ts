@@ -3,7 +3,7 @@ import type { User } from 'firebase/auth';
 import { Platform } from 'react-native';
 
 export class AccountRequestError extends Error {
-  constructor(readonly status: number, readonly code: string) {
+  constructor(readonly status: number, readonly code: string, readonly body?: unknown) {
     super(code);
   }
 }
@@ -45,7 +45,7 @@ export async function apiRequest(
     });
     const data = await response.json().catch(() => null);
     if (!response.ok) {
-      throw new AccountRequestError(response.status, data?.code ?? 'API_UNAVAILABLE');
+      throw new AccountRequestError(response.status, data?.code ?? 'API_UNAVAILABLE', data);
     }
     return data;
   } catch (error) {

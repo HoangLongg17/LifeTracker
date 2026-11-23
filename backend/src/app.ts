@@ -1,3 +1,4 @@
+import { waterReadRouter } from './routes/waterRead';
 import { logsRouter } from './routes/logs';
 import { getApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
@@ -28,6 +29,7 @@ if (process.env.NODE_ENV === "development") {
 }
 app.use(profileRouter(getAuth(), db));
 app.use(logsRouter(getAuth(), db));
+app.use(waterReadRouter(getAuth(), db));
 
 // Kiểm tra trạng thái Backend
 app.get("/health", (_req, res) => {

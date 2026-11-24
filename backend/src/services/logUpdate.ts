@@ -4,6 +4,8 @@ import {
   FieldValue,
   Timestamp,
   type Firestore,
+  type DocumentData,
+  type Transaction,
 } from 'firebase-admin/firestore';
 
 import {
@@ -25,6 +27,10 @@ type UpdateLogInput = {
   eventAt?: Date;
   timeZone?: string;
   fields?: Record<string, unknown>;
+  mealEdit?: {
+    fingerprint: string;
+    derive: (transaction: Transaction, previous: DocumentData, day: string) => Promise<Record<string, unknown>>;
+  };
 };
 
 const eventFields: Record<LogType, string> = {
@@ -151,6 +157,10 @@ export async function updateLog(input: UpdateLogInput) {
     const currentVersion = existing.get('version');
 
     if (currentVersion !== expectedVersion) {
+      if (type === 'meal' && input.mealEdit && currentVersion === expectedVersion + 1 &&
+          existing.get('lastMealEditFingerprint') === input.mealEdit.fingerprint) {
+        return { status: 'updated', entryId, version: currentVersion, localDate: existing.get('localDate') };
+      }
       return {
         status: 'VERSION_CONFLICT',
         currentVersion,
@@ -219,8 +229,13 @@ export async function updateLog(input: UpdateLogInput) {
 
     // 6. Cập nhật nhật ký.
     const before = existing.data()!;
+    if (type === 'meal' && input.mealEdit) {
+      Object.assign(changes, await input.mealEdit.derive(transaction, before, newDay));
+      changes.lastMealEditFingerprint = input.mealEdit.fingerprint;
+    }
     const derived = await reconcileIntervals(transaction, logRef, type, before, { ...before, ...changes });
     transaction.update(logRef, { ...changes, ...derived });
+    if (type === 'meal') transaction.update(userRef, { dataRevision: FieldValue.increment(1) });
     // 7. Đánh dấu ngày cũ cần tính lại.
 markSummaryStale(
   transaction,

@@ -1,5 +1,5 @@
 import { Timestamp, type DocumentData } from 'firebase-admin/firestore';
-import { isRecord, validDay, validTimeZone } from './logCommon';
+import { isRecord, parseLogInstant, validTimeZone } from './logCommon';
 import { ACTIVITY_END_TOLERANCE_MS, type TimedLog } from './sessionIntervals';
 
 const activityTypes = ['walking', 'running', 'cycling', 'swimming', 'gym', 'other'];
@@ -10,12 +10,8 @@ function invalid(field: string, code = 'INVALID_VALUE'): never { throw new Timed
 
 function parseTime(value: unknown, field: string, now: number) {
   if (value instanceof Timestamp) return value.toDate();
-  if (typeof value !== 'string' || !validDay(value.slice(0, 10)) ||
-      !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(value)) {
-    invalid(field, 'INVALID_DATE_TIME');
-  }
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime()) || date.getUTCFullYear() < 1 || date.getUTCFullYear() > 9999) invalid(field, 'INVALID_DATE_TIME');
+  const date = parseLogInstant(value);
+  if (!date) invalid(field, 'INVALID_DATE_TIME');
   if (date.getTime() > now + 5 * 60000) invalid(field, 'FUTURE_TIME');
   return date;
 }

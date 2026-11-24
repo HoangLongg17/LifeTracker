@@ -5,6 +5,7 @@ import {
   FieldValue,
   Timestamp,
   type Firestore,
+  type Transaction,
 } from 'firebase-admin/firestore';
 
 import {
@@ -26,6 +27,8 @@ type CreateLogInput = {
   eventAt: Date;
   timeZone: string;
   fields: Record<string, unknown>;
+  // Resolve source-derived fields only for new entries. Retries compare the original request.
+  deriveForCreate?: (transaction: Transaction, day: string) => Promise<Record<string, unknown>>;
 };
 
 // Trường thời gian dùng để xác định ngày nhật ký.
@@ -205,8 +208,10 @@ export async function createLog(input: CreateLogInput) {
     const timestamp = FieldValue.serverTimestamp();
 
     // Chỉ tạo document nếu entryId chưa tồn tại.
+    const derivedFields = await input.deriveForCreate?.(transaction, day);
     const record = {
       ...fields,
+      ...derivedFields,
       entryId,
       userId: uid,
       [eventField]: Timestamp.fromDate(eventAt),
@@ -220,6 +225,7 @@ export async function createLog(input: CreateLogInput) {
     };
     const derived = await reconcileIntervals(transaction, logRef, type, null, record);
     transaction.create(logRef, { ...record, ...derived });
+    if (type === 'meal') transaction.update(userRef, { dataRevision: FieldValue.increment(1) });
 
 // Đánh dấu tổng hợp cần tính lại,
 // kể cả khi chưa có document dailySummaries.

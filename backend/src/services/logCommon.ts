@@ -56,6 +56,16 @@ export function validDay(value: unknown): value is string {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
+export function parseLogInstant(value: unknown): Date | null {
+  if (typeof value !== 'string' || !validDay(value.slice(0, 10)) ||
+      !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(value)) {
+    return null;
+  }
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime()) || date.getUTCFullYear() < 1 || date.getUTCFullYear() > 9999) return null;
+  return date;
+}
+
 // Tính ngày địa phương từ thời điểm sự kiện
 export function localDate(
   date: Date,

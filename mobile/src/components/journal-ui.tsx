@@ -7,6 +7,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { AccountBrand, accountStyles, colors } from '@/components/account-ui';
 
 const images = {
+  meal: require('../../assets/images/foods/utensils.svg'),
   home: require('../../assets/images/journal/home.svg'), notebook: require('../../assets/images/journal/notebook.svg'),
   target: require('../../assets/images/journal/target.svg'), report: require('../../assets/images/journal/report.svg'),
   avatar: require('../../assets/images/journal/avatar.svg'), person: require('../../assets/images/journal/person.svg'),

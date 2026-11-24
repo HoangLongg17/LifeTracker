@@ -4,6 +4,7 @@ import { FormHeading, j, JournalBack, JournalIcon, JournalPage } from '@/compone
 import { dayKey, displayDate } from '@/utils/journal-time';
 
 const choices = [
+  { kind: 'meal', route: '/foods', title: 'Ăn uống', detail: 'Chọn thực phẩm và nhập khẩu phần' },
   { kind: 'water', route: '/water/new', title: 'Nước uống', detail: 'Nhập nhanh theo mL' },
   { kind: 'activity', route: '/activity', title: 'Vận động', detail: 'Loại hoạt động và số phút' },
   { kind: 'sleep', route: '/sleep', title: 'Giấc ngủ', detail: 'Giờ bắt đầu và thức dậy' },

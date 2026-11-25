@@ -5,13 +5,16 @@ import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-nativ
 import { AccountButton, accountStyles, colors, ErrorMessage } from '@/components/account-ui';
 import { j, JournalDialog, JournalHeader, JournalIcon, JournalPage } from '@/components/journal-ui';
 import { useSession } from '@/hooks/use-session';
+import type { MealJournalEntry } from '../../../../shared/food';
+import { deleteMeal, getMealDay } from '@/services/foods';
+import { dailyMealEnergyText, mealLabels, savedAmountText, savedNutrientText, wrapJournalNumbers } from '@/utils/food';
 import { loadProfile } from '@/services/profile';
 import { activities, deleteTimedEntry, getTimedDay, journalError, type Kind } from '@/services/timed-journal';
 import { deleteWaterEntry, getWaterDay, type WaterDayResponse } from '@/services/waterApi';
 import { dayKey, displayDate, durationText, shiftDay, wallTime } from '@/utils/journal-time';
 
-type Row = { kind: Kind | 'water'; id: string; version: number; title: string; detail: string; stamp: string; zone: string; overlap?: string };
-type Data = { date: string; today: string; water: WaterDayResponse; rows: Row[]; activity: number | null; sleep: number | null };
+type Row = ({ kind: 'meal'; meal: MealJournalEntry } | { kind: Kind | 'water' }) & { id: string; version: number; title: string; detail: string; stamp: string; zone: string; overlap?: string };
+type Data = { date: string; today: string; water: WaterDayResponse; mealReadFailed: boolean; energy: string; rows: Row[]; activity: number | null; sleep: number | null };
 type Params = { date?: string; notice?: string; savedTime?: string; savedAmount?: string; edited?: string };
 
 function Journal({ user }: { user: User }) {
@@ -36,8 +39,20 @@ function Journal({ user }: { user: User }) {
       const profile = await loadProfile(user);
       const today = dayKey(wallTime(Date.now(), profile.timeZone).date)!;
       const date = requested ?? today;
-      const [water, activity, sleep] = await Promise.all([getWaterDay(date, user), getTimedDay(user, 'activity', date), getTimedDay(user, 'sleep', date)]);
+      const [water, activity, sleep, meals] = await Promise.all([
+        getWaterDay(date, user), getTimedDay(user, 'activity', date), getTimedDay(user, 'sleep', date),
+        getMealDay(user, date).catch(() => null),
+      ]);
       const rows: Row[] = [
+        ...(meals ?? []).map(meal => {
+          const first = meal.items[0];
+          const name = first?.foodName ?? 'Bữa ăn';
+          const description = meal.items.length > 1 ? meal.items.length + ' món' : first && savedAmountText(first);
+          return { kind: 'meal' as const, meal, id: meal.entryId, version: meal.version,
+            title: mealLabels[meal.mealType] + ' · ' + name + (meal.items.length > 1 ? '…' : ''),
+            detail: [description, savedNutrientText(meal, 'energyKcal', 'kcal')].filter(Boolean).join(' · '),
+            stamp: meal.loggedAt, zone: meal.timeZone };
+        }),
         ...water.items.map(w => ({ kind: 'water' as const, id: w.entryId, version: w.version, title: 'Nước · ' + w.volumeMl.toLocaleString('vi-VN') + ' mL',
           detail: w.note || 'Đã lưu', stamp: w.loggedAt, zone: w.timeZone })),
         ...activity.items.map(a => ({ kind: 'activity' as const, id: a.entryId, version: a.version, title: activities[a.activityType] + ' · ' + durationText(a.durationMinutes),
@@ -49,7 +64,7 @@ function Journal({ user }: { user: User }) {
           overlap: s.crossTypeOverlap ? 'Trùng giờ với vận động' : s.overlapStatus === 'needs_review' ? 'Trùng giờ · cần xem lại' : undefined })),
       ];
       rows.sort((a, b) => Date.parse(b.stamp) - Date.parse(a.stamp) || a.id.localeCompare(b.id));
-      if (active && latestRead.current === revision) setData({ date, today, water, rows, activity: activity.totalMinutes, sleep: sleep.totalMinutes });
+      if (active && latestRead.current === revision) setData({ date, today, water, rows, mealReadFailed: meals === null, energy: dailyMealEnergyText(meals), activity: activity.totalMinutes, sleep: sleep.totalMinutes });
     }
     refresh().catch(cause => { if (active) setError(journalError(cause)); });
     return () => { active = false; };
@@ -65,13 +80,15 @@ function Journal({ user }: { user: User }) {
   }
   function edit(row: Row) {
     setDialog(null);
+    if (row.kind === 'meal') { router.push({ pathname: '/foods/portion', params: { editId: row.id } }); return; }
     router.push({ pathname: row.kind === 'water' ? '/water/new' : row.kind === 'activity' ? '/activity' : '/sleep', params: { date: date!, editId: row.id } });
   }
   async function remove() {
     if (!selected || deleting.current) return;
     deleting.current = true; setRemoving(true); setActionError('');
     try {
-      if (selected.kind === 'water') await deleteWaterEntry(user, selected.id, selected.version);
+      if (selected.kind === 'meal') await deleteMeal(user, selected.id, selected.version);
+      else if (selected.kind === 'water') await deleteWaterEntry(user, selected.id, selected.version);
       else await deleteTimedEntry(user, selected.kind, selected.id, selected.version);
       setDialog(null); router.setParams({ notice: 'Đã xóa bản ghi.', savedTime: '', savedAmount: '', edited: '' }); refresh();
     } catch (cause) { setActionError(journalError(cause)); }
@@ -114,15 +131,20 @@ function Journal({ user }: { user: User }) {
           setSelected(row); setActionError(''); setDialog('actions');
         }} style={[j.row, { minHeight: 52 }, i > 0 && j.hairline]}>
           <View style={[j.tile, { width: 34, height: 34 }, row.kind === 'sleep' && { backgroundColor: '#EEEAF4' }]}><JournalIcon name={row.kind} /></View>
-          <View style={{ flex: 1 }}><Text style={j.strong}>{row.title}</Text><Text style={j.small}>{row.detail}</Text>
+          <View style={[{ flex: 1 }, row.kind === 'meal' && { minWidth: 0, flexShrink: 1 }]}><Text style={j.strong}>{row.title}</Text>
+            {row.kind === 'meal' ? <Text style={j.small} accessibilityLabel={row.detail}>{wrapJournalNumbers(row.detail)}</Text> : <Text style={j.small}>{row.detail}</Text>}
             {row.overlap && <Text style={[j.small, { color: '#865619' }]}>{row.overlap}</Text>}</View>
           <Text style={j.small}>{wallTime(row.stamp, row.zone).time}</Text>
-        </Pressable>) : <Text style={[j.small, { paddingVertical: 14 }]}>Chưa có bản ghi trong ngày này.</Text>}
+        </Pressable>) : <Text style={[j.small, { paddingVertical: 14 }]}>{data.mealReadFailed ? 'Đang thiếu dữ liệu bữa ăn.' : 'Chưa có bản ghi trong ngày này.'}</Text>}
       </View>
-      {(data.activity !== null || data.sleep !== null) && <View style={{ gap: 4, marginTop: 14 }}>
+      {data.mealReadFailed && <View style={{ gap: 8, marginTop: 12 }}>
+        <ErrorMessage message="Chưa tải được bữa ăn cho ngày này." /><AccountButton outline label="Tải lại nhật ký" onPress={refresh} />
+      </View>}
+      <View style={{ gap: 4, marginTop: 14 }}>
         {data.activity !== null && <Text style={j.small}>Vận động trong ngày · {durationText(data.activity)}</Text>}
         {data.sleep !== null && <Text style={j.small}>Tổng thời lượng phiên ngủ · {durationText(data.sleep)}</Text>}
-      </View>}
+        <Text style={j.small} accessibilityLabel={'Năng lượng trong ngày · ' + data.energy}>Năng lượng trong ngày · {wrapJournalNumbers(data.energy)}</Text>
+      </View>
       {!!notice && <View style={{ marginTop: 20 }}><AccountButton outline label="Thêm bản ghi khác" onPress={add} /></View>}
     </>}
     {dialog && <JournalDialog title={dialog === 'date' ? 'Chọn ngày nhật ký' : dialog === 'delete' ? 'Xóa bản ghi này?' : selected?.title ?? 'Bản ghi'}

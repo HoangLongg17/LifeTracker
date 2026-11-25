@@ -1,3 +1,4 @@
+import { foodsRouter } from './routes/foods';
 import { waterReadRouter } from './routes/waterRead';
 import { logsRouter } from './routes/logs';
 import { getApp } from "firebase-admin/app";
@@ -28,6 +29,7 @@ if (process.env.NODE_ENV === "development") {
   }));
 }
 app.use(profileRouter(getAuth(), db));
+app.use(foodsRouter(getAuth(), db));
 app.use(logsRouter(getAuth(), db));
 app.use(waterReadRouter(getAuth(), db));
 

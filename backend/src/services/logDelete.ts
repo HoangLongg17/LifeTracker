@@ -140,6 +140,7 @@ transaction.create(tombstoneRef, {
 
 // 9. Xóa document nhật ký gốc.
     transaction.delete(logRef);
+    if (type === 'meal') transaction.update(userRef, { dataRevision: FieldValue.increment(1) });
     markSummaryStale(
       transaction,
       summaryRef,

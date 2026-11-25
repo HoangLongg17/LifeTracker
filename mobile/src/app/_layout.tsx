@@ -38,6 +38,9 @@ function Navigation() {
         <Stack.Protected guard={signedIn}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="journal-add" />
+          <Stack.Screen name="foods/index" />
+          <Stack.Screen name="foods/[foodId]" />
+          <Stack.Screen name="foods/portion" />
           <Stack.Screen name="activity" />
           <Stack.Screen name="sleep" />
           <Stack.Screen name="profile" />

@@ -6,6 +6,7 @@ import {
 } from 'firebase-admin/firestore';
 
 import { respondWithResult, serialize, storageError } from './logResponse';
+import { mealLogsRouter } from './mealLogs';
 import { timedLogRouter } from './timedLogs';
 import { verifyAccount } from '../middlewares/verifyAccount';
 import {
@@ -212,6 +213,7 @@ export function logsRouter(
   // Mọi endpoint phía dưới đều phải xác thực.
   router.use('/me/logs', verifyAccount(auth));
 
+  router.use('/me/logs/meal', mealLogsRouter(db));
   router.use('/me/logs/activity', timedLogRouter('activity', db));
   router.use('/me/logs/sleep', timedLogRouter('sleep', db));
 

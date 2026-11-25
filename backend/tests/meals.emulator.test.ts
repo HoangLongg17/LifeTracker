@@ -22,8 +22,8 @@ test('Meal save and day journal over HTTP with Firestore', { skip: !local }, asy
   const server = express().use(express.json()).use(foodsRouter(auth, db)).use(logsRouter(auth, db)).listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = 'http://127.0.0.1:' + (server.address() as AddressInfo).port;
-  const call = (url: string, payload?: unknown, uid = 'a') => fetch(base + url, {
-    method: payload === undefined ? 'GET' : 'POST',
+  const call = (url: string, payload?: unknown, uid = 'a', method = payload === undefined ? 'GET' : 'POST') => fetch(base + url, {
+    method,
     headers: { 'Content-Type': 'application/json', ...(uid ? { Authorization: 'Bearer ' + uid } : {}) },
     ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
   });
@@ -38,7 +38,7 @@ test('Meal save and day journal over HTTP with Firestore', { skip: !local }, asy
   try {
     const rows = validateSeed(JSON.parse(readFileSync(join(__dirname, '../data/foodCatalog.json'), 'utf8')));
     await importFoods(db, rows);
-    for (const uid of ['a','b','blocked','no-profile']) {
+    for (const uid of ['a','b','limits','blocked','no-profile']) {
       await profile(uid).set({ status: uid === 'blocked' ? 'disabled' : 'active', dataRevision: 0 });
       if (uid !== 'no-profile') await profile(uid).collection('profiles').doc('main').set({ timeZone: dish.timeZone });
     }
@@ -58,6 +58,89 @@ test('Meal save and day journal over HTTP with Firestore', { skip: !local }, asy
       for (const change of cases) assert.equal((await call(route, { ...dish, ...change })).status, 400, JSON.stringify(change));
       assert.equal((await log('a').get()).size, 0);
       assert.equal((await profile('a').get()).get('dataRevision'), 0);
+    });
+    await t.test('invalid portion never writes a new meal or alters an existing meal, user or day summary', async () => {
+      const uid = 'limits';
+      const ref = log(uid).doc('fixed');
+      const summary = profile(uid).collection('dailySummaries').doc(date);
+      const header = { loggedAt: dish.loggedAt, timeZone: dish.timeZone, mealType: dish.mealType };
+      assert.equal((await call(route, { ...header, entryId: ref.id, items: [cabbage] }, uid)).status, 201);
+      const before = await db.getAll(ref, profile(uid), summary);
+      const waterId = 'usda-sr-174158';
+      const invalid = [
+        ...[-1, 0, 0.09, 100000, 12.25].map(consumedGrams => [{ foodId: cabbage.foodId, consumedGrams }]),
+        ...[-1, 0, 0.09, 100000, 7.12].map(consumedMl => [{ foodId: waterId, consumedMl }]),
+        ...[-1, 0, 0.09, 1000, 1.23].map(quantity => [{ foodId: bread.foodId, quantity }]),
+        [{ foodId: 'usda-sr-169757', quantity: 633 }],
+        [{ foodId: 'usda-sr-171926', consumedMl: 91000 }],
+        [{ foodId: cabbage.foodId, consumedGrams: 60000 }, { foodId: bread.foodId, consumedGrams: 40000 }],
+      ];
+      for (const [i, items] of invalid.entries()) {
+        const responses = await Promise.all([
+          call('/nutrition/calculate', { items }, uid), call(route + '/fixed/preview', { version: 1, items }, uid),
+          call(route, { ...header, entryId: 'invalid-' + i, items, warningConfirmed: true }, uid),
+          call(route + '/fixed', { ...header, version: 1, items, warningConfirmed: true }, uid, 'PATCH'),
+        ]);
+        const [preview, ...mutationCodes] = await Promise.all(responses.map(async response => {
+          assert.equal(response.status, 400, JSON.stringify(items));
+          return response.json();
+        }));
+        const code = preview.error.fieldErrors[0].code;
+        assert.ok(['INVALID_PORTION','GRAM_LIMIT','ML_LIMIT','SERVING_LIMIT','PORTION_PRECISION','CONVERTED_MASS_LIMIT'].includes(code), code);
+        for (const result of mutationCodes) assert.equal(result.code, code);
+      }
+      assert.equal((await log(uid).get()).size, 1);
+      const after = await db.getAll(ref, profile(uid), summary);
+      after.forEach((doc, i) => assert.ok(before[i].updateTime!.isEqual(doc.updateTime!), doc.ref.path));
+    });
+    await t.test('both create and edit accept inclusive endpoints for grams, mL and servings', async () => {
+      const uid = 'limits';
+      const header = { loggedAt: dish.loggedAt, timeZone: dish.timeZone, mealType: dish.mealType, warningConfirmed: true };
+      const boundaries = [
+        { foodId: cabbage.foodId, key: 'consumedGrams', max: 99999.9 },
+        { foodId: 'usda-sr-174158', key: 'consumedMl', max: 99999.9 },
+        { foodId: bread.foodId, key: 'quantity', max: 999.9 },
+      ];
+      for (const {foodId, key, max} of boundaries) {
+        for (const [initial, updated] of [[0.1, max], [max, 0.1]]) {
+          const entryId = key + (initial === max ? '-high' : '-low');
+          const payload = (amount: number) => ({ ...header, items: [{foodId, [key]: amount}] });
+          assert.equal((await call(route, { ...payload(initial), entryId }, uid)).status, 201);
+          const ref = log(uid).doc(entryId);
+          assert.equal((await ref.get()).get('items')[0].portionInput[key], initial);
+          assert.equal((await call(route + '/' + entryId, { ...payload(updated), version: 1 }, uid, 'PATCH')).status, 200);
+          const doc = await ref.get();
+          assert.equal(doc.get('version'), 2);
+          assert.equal(doc.get('items')[0].portionInput[key], updated);
+        }
+      }
+    });
+    await t.test('5000 mL is accepted, volume-only excess can be confirmed on create and edit', async () => {
+      const uid = 'limits';
+      const source = db.collection('foodCatalog');
+      const water = (await source.doc('usda-sr-174158').get()).data()!;
+      const volumeId = 'volume-test';
+      await source.doc(volumeId).set({ ...water, foodId: volumeId, referenceBasis: '100mL', referenceUnit: 'mL',
+        densityGramsPerMl: null, densitySourcePortionId: null });
+      const header = { loggedAt: '2024-02-28T12:15:00Z', timeZone: dish.timeZone, mealType: dish.mealType };
+      const payload = (amount: number) => ({ ...header, items: [{ foodId: volumeId, consumedMl: amount }] });
+      const ref = log(uid).doc('volume-warning');
+      const editUrl = route + '/' + ref.id;
+      const expectWarning = async (response: Response) => {
+        assert.equal(response.status, 400);
+        const result = await response.json();
+        assert.equal(result.code, 'WARNING_CONFIRMATION_REQUIRED');
+        assert.deepEqual(result.warnings, ['HIGH_PORTION_VOLUME']);
+      };
+      assert.equal((await call(route, { ...payload(5000), entryId: 'volume-threshold' }, uid)).status, 201);
+      await expectWarning(await call(route, { ...payload(5000.1), entryId: ref.id }, uid));
+      assert.equal((await ref.get()).exists, false);
+      assert.equal((await call(route, { ...payload(5000.1), entryId: ref.id, warningConfirmed: true }, uid)).status, 201);
+      const before = await ref.get();
+      await expectWarning(await call(editUrl, { ...payload(5100), version: 1 }, uid, 'PATCH'));
+      assert.ok(before.updateTime!.isEqual((await ref.get()).updateTime!));
+      assert.equal((await call(editUrl, { ...payload(5100), version: 1, warningConfirmed: true }, uid, 'PATCH')).status, 200);
+      assert.equal((await ref.get()).get('items')[0].consumedMl, 5100);
     });
     await t.test('concurrent saves create one 159 g cabbage record, one summary revision, and the correct local date', async () => {
       const preview = await (await call('/nutrition/calculate', { items: [cabbage] })).json();

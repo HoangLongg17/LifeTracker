@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
-import { readPortion, permittedUnits, basisText, nutrientText } from '../src/utils/food.ts';
+import { readPortion, permittedUnits, basisText, nutrientText, checkMealPortions, dailyMealEnergyText, savedAmountText, wrapJournalNumbers } from '../src/utils/food.ts';
 
 const data = JSON.parse(readFileSync(new URL('../../backend/data/foodCatalog.json', import.meta.url), 'utf8'));
 const pick = id => data.find(row => row.foodId === id);
@@ -46,4 +46,51 @@ test('journal keeps entered portions and the equivalent weight, partial totals, 
   const meal = { totals: { fiberGrams: 0, sodiumMg: null }, nutrientCompleteness: { fiberGrams: 'partial', sodiumMg: 'unknown' } };
   assert.equal(savedNutrientText(meal, 'fiberGrams', 'g'), '0 g (phần đã biết)');
   assert.equal(savedNutrientText(meal, 'sodiumMg', 'mg'), 'Chưa có dữ liệu');
+});
+
+test('mobile blocks invalid raw input in g, mL and servings without rounding or truncating', () => {
+  const solid = pick('usda-sr-169975');
+  const volume = { ...solid, referenceBasis:'100mL', referenceUnit:'mL', densityGramsPerMl:null };
+  const served = { ...solid, servingSize:0.75, servingUnit:'g' };
+  for (const [unit,food,upper,over] of [['g',solid,'99999,9','100000'],['mL',volume,'99999.9','100000'],['serving',served,'999,9','1000']]) {
+    for (const text of ['0,1','0.1',upper]) {
+      const result = checkMealPortions([{ text, unit, food }]);
+      assert.equal(result.items.length,1); assert.equal(result.errors[0],'');
+    }
+    for (const text of [over,'-1','0','0,09','3.14','1,00','10000000000000000000', '1e8']) {
+      const result = checkMealPortions([{text,unit,food}]);
+      assert.equal(result.items,null,text); assert.ok(result.errors[0]); assert.deepEqual(result.warnings,[]);
+    }
+  }
+});
+test('mobile checks exact converted weight and separates volume warnings from hard limits', () => {
+  const base=pick('usda-sr-169975');
+  const food={ ...base, densityGramsPerMl:3, servingSize:37.5, servingUnit:'mL' };
+  const run=(text,unit)=>checkMealPortions([{food,text,unit}]);
+  assert.ok(run('33333,3','mL').items); assert.equal(run('33333,4','mL').items,null);
+  assert.equal(run('900','serving').items,null);
+  assert.equal(run('5000','g').warnings.length,0);
+  assert.deepEqual(run('5000,1','g').warnings,['HIGH_PORTION_MASS']);
+  const row={food:{...base,referenceUnit:'mL',referenceBasis:'100mL',densityGramsPerMl:null},unit:'mL',text:'5000,1'};
+  assert.deepEqual(checkMealPortions([row]).warnings,['HIGH_PORTION_VOLUME']);
+  assert.deepEqual(checkMealPortions([{...row,text:'5000'}]).warnings,[]);
+  const pair=[{food:base,text:'99997,8',unit:'g'},{food,text:'0,7',unit:'mL'}];
+  assert.ok(checkMealPortions(pair).items);
+  const large=checkMealPortions([...pair,{food:base,text:'0,1',unit:'g'}]); assert.equal(large.items,null); assert.match(large.mealError,/99\.999,9 g/);
+});
+test('journal localizes long amounts and sums a full day before rounding, preserving unknown and zero', () => {
+  const meal=(kcal,state='complete')=>({totals:{energyKcal:kcal},nutrientCompleteness:{energyKcal:state}});
+  assert.equal(savedAmountText({amount:12500.5,unit:'g'}),'12.500,5 g');
+  assert.equal(savedAmountText({amount:1.235,unit:'serving',converted:{amount:12500.55,unit:'g'}}),'1,2 phần (12.500,6 g)');
+  assert.equal(dailyMealEnergyText([meal(39.75),meal(161.28)]),'201 kcal');
+  assert.equal(dailyMealEnergyText([meal(1.15),meal(2.3)]),'3,5 kcal');
+  assert.equal(dailyMealEnergyText([meal(15.25),meal(15.25)]),'30,5 kcal');
+  assert.equal(dailyMealEnergyText([meal(0)]),'0 kcal'); assert.equal(dailyMealEnergyText([]),'Chưa ghi bữa ăn');
+  assert.equal(dailyMealEnergyText(null),'Chưa tải được dữ liệu'); assert.equal(dailyMealEnergyText([meal(null,'unknown')]),'Chưa có dữ liệu');
+  assert.equal(dailyMealEnergyText([meal(0),meal(null,'unknown')]),'0 kcal (phần đã biết)');
+  assert.equal(dailyMealEnergyText([meal(12500.5,'partial')]),'12.500,5 kcal (phần đã biết)');
+  const historic=dailyMealEnergyText([meal(Number.MAX_VALUE),meal(Number.MAX_VALUE)]);
+  assert.doesNotMatch(historic,/Infinity|NaN|e\+/);assert.match(historic,/^359\.538\./);
+  const wrapped=wrapJournalNumbers(historic);assert.ok(wrapped.includes('\u200b'));assert.equal(wrapped.replaceAll('\u200b',''),historic);
+  assert.equal(wrapJournalNumbers('12.500,5 g'),'12.500,5 g');
 });

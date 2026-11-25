@@ -47,7 +47,8 @@ test('2 servings at 150 g each and 200 kcal/100 g is 300 g and 600 kcal, counted
   assert.equal(preview.items[0].amount, 300);
   assert.deepEqual(preview.totals, single(food, { consumedGrams: 300 }).totals);
   assert.equal(preview.totals.energyKcal, 600);
-  approx(single(food, { quantity: 0.25 }).totals.energyKcal, 75);
+  approx(single(food, { quantity: 0.2 }).totals.energyKcal, 60);
+  fails('PORTION_PRECISION', () => single(food, { quantity: 0.25 }));
 });
 test('250 mL at 60 kcal/100 mL gives 150 kcal; directly measured volume needs no density', () => {
   const preview = single(liquid, { consumedMl: 250 });
@@ -111,17 +112,64 @@ test('rejects missing, malformed, ambiguous or spoofed inputs before reading cat
     ...[null, false, '25', 0, -1.1, NaN, Infinity].map(quantity => ({ foodId: 'a', quantity }))]) {
     fails('INVALID_PORTION', () => readPortionItems({ items: [bad] }));
   }
-  const valid = { foodId: 'a', consumedMl: 5.25 };
+  const valid = { foodId: 'a', consumedMl: 5.2 };
   assert.deepEqual(readPortionItems({ items: [valid, item] }), [valid, item]);
   assert.equal(readPortionItems({ items: Array(50).fill(item) }).length, 50);
   fails('FOOD_NOT_FOUND', () => calculatePortions([valid], new Map()));
 });
 test('reports numerical overflow per portion or in totals; extreme valid meal amounts are flagged for review', () => {
-  fails('PORTION_OUT_OF_RANGE', () => single(solid, { consumedGrams: Number.MAX_VALUE }));
-  fails('PORTION_OUT_OF_RANGE', () => single(solid, { consumedGrams: Number.MIN_VALUE }));
+  fails('GRAM_LIMIT', () => single(solid, { consumedGrams: Number.MAX_VALUE }));
+  fails('GRAM_LIMIT', () => single(solid, { consumedGrams: Number.MIN_VALUE }));
   const big = reference('big', { energyKcal: Number.MAX_VALUE });
   const amounts: PortionItem[] = [{ foodId: 'big', consumedGrams: 100 }, { foodId: 'big', consumedGrams: 100 }];
   fails('PORTION_OUT_OF_RANGE', () => calculatePortions(amounts, new Map([['big', big]])));
   assert.deepEqual(single(solid, { consumedGrams: 6000 }).warnings, ['HIGH_PORTION_MASS', 'HIGH_MEAL_ENERGY']);
   assert.deepEqual(single({ ...solid, energyKcal: 70 }, { consumedGrams: 5000 }).warnings, []);
+});
+
+test('raw portion ranges are inclusive and apply to preview parsing and conversion', () => {
+  const tinyServing = reference('small-serving', { servingUnit: 'g', servingSize: 0.75 });
+  for (const [key, food, high, code] of [
+    ['consumedGrams',solid,99999.9,'GRAM_LIMIT'],
+    ['consumedMl',liquid,99999.9,'ML_LIMIT'],
+    ['quantity',tinyServing,999.9,'SERVING_LIMIT'],
+  ] as const) {
+    const item = (value: number): PortionItem => {
+      if (key === 'consumedGrams') return { foodId: food.foodId, consumedGrams: value };
+      if (key === 'consumedMl') return { foodId: food.foodId, consumedMl: value };
+      return { foodId: food.foodId, quantity: value };
+    };
+    for (const n of [0.1, 1, high]) {
+      const row = item(n);
+      assert.deepEqual(readPortionItems({ items:[row] }), [row]);
+      assert.ok(single(food, row).items[0].amount > 0);
+    }
+    for (const n of [0, -0.1]) fails('INVALID_PORTION', () => readPortionItems({ items:[item(n)] }));
+    for (const n of [0.09, high + 0.1]) fails(code, () => readPortionItems({items:[item(n)]}));
+    fails('PORTION_PRECISION', () => readPortionItems({items:[item(12.34)]}));
+    fails(code, () => single(food, item(high + 0.1)));
+  }
+});
+test('uses unrounded decimal mass for mL, servings, and multi-line meals; never assumes water density', () => {
+  const dense = reference('dense', { densityGramsPerMl: 3, servingUnit: 'mL', servingSize: 37.5 });
+  assert.equal(single(dense, {consumedMl:33333.3}).items[0].amount, 99999.9);
+  fails('CONVERTED_MASS_LIMIT', () => single(dense, {consumedMl:33333.4}));
+  fails('CONVERTED_MASS_LIMIT', () => single(dense, {quantity:900}));
+  const roundedEdge = reference('edge', { servingUnit:'g', servingSize: 99999.91 });
+  fails('CONVERTED_MASS_LIMIT', () => single(roundedEdge,{quantity:1}));
+  const map = new Map([[solid.foodId, solid], [dense.foodId, dense]]);
+  const mix: PortionItem[] = [{ foodId:solid.foodId, consumedGrams:99997.8 }, { foodId:dense.foodId, consumedMl:0.7 }];
+  assert.equal(calculatePortions(mix, map).items[1].amount, 2.1);
+  fails('CONVERTED_MASS_LIMIT', () => calculatePortions([...mix,{foodId:solid.foodId,consumedGrams:0.1}],map));
+  assert.equal(single(liquid,{consumedMl:99999.9}).items[0].unit,'mL');
+});
+test('warns only above 5000 g or mL, including volume-only sources and converted portions', () => {
+  const neutral = { ...liquid, energyKcal:0, servingUnit:'mL' as const, servingSize:100 };
+  assert.deepEqual(single(neutral, {consumedMl:5000}).warnings, []);
+  assert.deepEqual(single(neutral, {consumedMl:5000.1}).warnings, ['HIGH_PORTION_VOLUME']);
+  assert.deepEqual(single(neutral, {quantity:50.1}).warnings, ['HIGH_PORTION_VOLUME']);
+  const light = { ...neutral, densityGramsPerMl:0.5 };
+  assert.deepEqual(single(light, {consumedGrams:2500}).warnings, []);
+  assert.deepEqual(single(light, {consumedGrams:2500.1}).warnings, ['HIGH_PORTION_VOLUME']);
+  assert.deepEqual(single({ ...solid, energyKcal:0 },{consumedGrams:5000.1}).warnings, ['HIGH_PORTION_MASS']);
 });

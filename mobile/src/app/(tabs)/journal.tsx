@@ -7,14 +7,14 @@ import { j, JournalDialog, JournalHeader, JournalIcon, JournalPage } from '@/com
 import { useSession } from '@/hooks/use-session';
 import type { MealJournalEntry } from '../../../../shared/food';
 import { deleteMeal, getMealDay } from '@/services/foods';
-import { mealLabels, savedAmountText, savedNutrientText } from '@/utils/food';
+import { dailyMealEnergyText, mealLabels, savedAmountText, savedNutrientText, wrapJournalNumbers } from '@/utils/food';
 import { loadProfile } from '@/services/profile';
 import { activities, deleteTimedEntry, getTimedDay, journalError, type Kind } from '@/services/timed-journal';
 import { deleteWaterEntry, getWaterDay, type WaterDayResponse } from '@/services/waterApi';
 import { dayKey, displayDate, durationText, shiftDay, wallTime } from '@/utils/journal-time';
 
 type Row = ({ kind: 'meal'; meal: MealJournalEntry } | { kind: Kind | 'water' }) & { id: string; version: number; title: string; detail: string; stamp: string; zone: string; overlap?: string };
-type Data = { date: string; today: string; water: WaterDayResponse; mealReadFailed: boolean; rows: Row[]; activity: number | null; sleep: number | null };
+type Data = { date: string; today: string; water: WaterDayResponse; mealReadFailed: boolean; energy: string; rows: Row[]; activity: number | null; sleep: number | null };
 type Params = { date?: string; notice?: string; savedTime?: string; savedAmount?: string; edited?: string };
 
 function Journal({ user }: { user: User }) {
@@ -64,7 +64,7 @@ function Journal({ user }: { user: User }) {
           overlap: s.crossTypeOverlap ? 'Trùng giờ với vận động' : s.overlapStatus === 'needs_review' ? 'Trùng giờ · cần xem lại' : undefined })),
       ];
       rows.sort((a, b) => Date.parse(b.stamp) - Date.parse(a.stamp) || a.id.localeCompare(b.id));
-      if (active && latestRead.current === revision) setData({ date, today, water, rows, mealReadFailed: meals === null, activity: activity.totalMinutes, sleep: sleep.totalMinutes });
+      if (active && latestRead.current === revision) setData({ date, today, water, rows, mealReadFailed: meals === null, energy: dailyMealEnergyText(meals), activity: activity.totalMinutes, sleep: sleep.totalMinutes });
     }
     refresh().catch(cause => { if (active) setError(journalError(cause)); });
     return () => { active = false; };
@@ -131,7 +131,8 @@ function Journal({ user }: { user: User }) {
           setSelected(row); setActionError(''); setDialog('actions');
         }} style={[j.row, { minHeight: 52 }, i > 0 && j.hairline]}>
           <View style={[j.tile, { width: 34, height: 34 }, row.kind === 'sleep' && { backgroundColor: '#EEEAF4' }]}><JournalIcon name={row.kind} /></View>
-          <View style={{ flex: 1 }}><Text style={j.strong}>{row.title}</Text><Text style={j.small}>{row.detail}</Text>
+          <View style={[{ flex: 1 }, row.kind === 'meal' && { minWidth: 0, flexShrink: 1 }]}><Text style={j.strong}>{row.title}</Text>
+            {row.kind === 'meal' ? <Text style={j.small} accessibilityLabel={row.detail}>{wrapJournalNumbers(row.detail)}</Text> : <Text style={j.small}>{row.detail}</Text>}
             {row.overlap && <Text style={[j.small, { color: '#865619' }]}>{row.overlap}</Text>}</View>
           <Text style={j.small}>{wallTime(row.stamp, row.zone).time}</Text>
         </Pressable>) : <Text style={[j.small, { paddingVertical: 14 }]}>{data.mealReadFailed ? 'Đang thiếu dữ liệu bữa ăn.' : 'Chưa có bản ghi trong ngày này.'}</Text>}
@@ -139,10 +140,11 @@ function Journal({ user }: { user: User }) {
       {data.mealReadFailed && <View style={{ gap: 8, marginTop: 12 }}>
         <ErrorMessage message="Chưa tải được bữa ăn cho ngày này." /><AccountButton outline label="Tải lại nhật ký" onPress={refresh} />
       </View>}
-      {(data.activity !== null || data.sleep !== null) && <View style={{ gap: 4, marginTop: 14 }}>
+      <View style={{ gap: 4, marginTop: 14 }}>
         {data.activity !== null && <Text style={j.small}>Vận động trong ngày · {durationText(data.activity)}</Text>}
         {data.sleep !== null && <Text style={j.small}>Tổng thời lượng phiên ngủ · {durationText(data.sleep)}</Text>}
-      </View>}
+        <Text style={j.small} accessibilityLabel={'Năng lượng trong ngày · ' + data.energy}>Năng lượng trong ngày · {wrapJournalNumbers(data.energy)}</Text>
+      </View>
       {!!notice && <View style={{ marginTop: 20 }}><AccountButton outline label="Thêm bản ghi khác" onPress={add} /></View>}
     </>}
     {dialog && <JournalDialog title={dialog === 'date' ? 'Chọn ngày nhật ký' : dialog === 'delete' ? 'Xóa bản ghi này?' : selected?.title ?? 'Bản ghi'}

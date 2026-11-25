@@ -47,7 +47,7 @@ export type NutritionPreview = {
   })[];
   totals: NutrientValues;
   nutrientCompleteness: Record<Nutrient, 'complete' | 'partial' | 'unknown'>;
-  warnings: ('HIGH_PORTION_MASS' | 'HIGH_MEAL_ENERGY')[];
+  warnings: ('HIGH_PORTION_MASS' | 'HIGH_PORTION_VOLUME' | 'HIGH_MEAL_ENERGY')[];
 };
 
 export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';

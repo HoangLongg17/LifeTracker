@@ -6,9 +6,17 @@ import { isRecord } from './logCommon';
 
 // Use source decimals until the JSON boundary. 350 places also cover subnormal JSON numbers.
 const Decimal = BigNumber.clone({ DECIMAL_PLACES: 350 });
+const physicalMax = 99_999.9;
+const servingMax = 999.9;
+const portionWarning = 5_000;
 const amountKeys = ['consumedGrams', 'consumedMl', 'quantity'] as const;
 const messages = {
   INVALID_PORTION: 'Mỗi món cần một lượng hữu hạn lớn hơn 0 và một đơn vị duy nhất.',
+  PORTION_PRECISION: 'Chỉ nhập tối đa một chữ số thập phân.',
+  GRAM_LIMIT: 'Khối lượng phải từ 0,1 đến 99.999,9 g.',
+  ML_LIMIT: 'Thể tích phải từ 0,1 đến 99.999,9 mL.',
+  SERVING_LIMIT: 'Số phần phải từ 0,1 đến 999,9 phần.',
+  CONVERTED_MASS_LIMIT: 'Khối lượng sau quy đổi của bữa ăn không được vượt 99.999,9 g.',
   INVALID_ITEMS: 'Gửi từ 1 đến 50 món trong trường items.',
   INVALID_FOOD_ID: 'Mã thực phẩm không hợp lệ.',
   FOOD_NOT_FOUND: 'Thực phẩm hiện không có trong danh mục.',
@@ -23,6 +31,15 @@ export class PortionError extends Error {
   }
 }
 
+function checkAmount(amount: unknown, key: typeof amountKeys[number], field: string): asserts amount is number {
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) throw new PortionError('INVALID_PORTION', field);
+  if (amount < 0.1 || amount > (key === 'quantity' ? servingMax : physicalMax)) {
+    const code = key === 'quantity' ? 'SERVING_LIMIT' : key === 'consumedMl' ? 'ML_LIMIT' : 'GRAM_LIMIT';
+    throw new PortionError(code, field);
+  }
+  if (new Decimal(amount).decimalPlaces()! > 1) throw new PortionError('PORTION_PRECISION', field);
+}
+
 export function readPortionItems(body: unknown): PortionItem[] {
   if (!isRecord(body) || Object.keys(body).length !== 1 || !Array.isArray(body.items)
       || body.items.length < 1 || body.items.length > 50) {
@@ -34,9 +51,7 @@ export function readPortionItems(body: unknown): PortionItem[] {
     const key = amountKeys.find(name => Object.hasOwn(row, name));
     if (!key || Object.keys(row).length !== 2) throw new PortionError('INVALID_PORTION', field);
     const amount = row[key];
-    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
-      throw new PortionError('INVALID_PORTION', field + '.' + key);
-    }
+    checkAmount(amount, key, field + '.' + key);
     if (key === 'consumedGrams') return { foodId: row.foodId, consumedGrams: amount };
     if (key === 'consumedMl') return { foodId: row.foodId, consumedMl: amount };
     return { foodId: row.foodId, quantity: amount };
@@ -51,30 +66,29 @@ function jsonNumber(decimal: BigNumber, field: string) {
 
 function normalizedPortion(food: Food, input: PortionItem, field: string) {
   const unit = food.referenceUnit === 'serving' ? food.servingUnit : food.referenceUnit;
-  let enteredUnit: 'g' | 'mL';
-  let amount: BigNumber;
-  if (input.quantity !== undefined) {
+  const key = input.quantity !== undefined ? 'quantity' : input.consumedMl !== undefined ? 'consumedMl' : 'consumedGrams';
+  const entered = input[key];
+  checkAmount(entered, key, field + '.' + key);
+  let enteredUnit: 'g' | 'mL' = key === 'consumedMl' ? 'mL' : 'g';
+  let physical = new Decimal(entered);
+  if (key === 'quantity') {
     if (food.servingSize === null || food.servingUnit === null) throw new PortionError('MISSING_SERVING_SIZE', field);
     enteredUnit = food.servingUnit;
-    amount = new Decimal(input.quantity).times(food.servingSize);
-  } else if (input.consumedMl !== undefined) {
-    enteredUnit = 'mL';
-    amount = new Decimal(input.consumedMl);
-  } else {
-    enteredUnit = 'g';
-    amount = new Decimal(input.consumedGrams);
+    physical = physical.times(food.servingSize);
   }
+  // Measure from the entered unit once. A round trip through density can change a boundary comparison.
+  const density = food.densityGramsPerMl;
+  const grams = enteredUnit === 'g' ? physical : density === null ? null : physical.times(density);
+  const ml = enteredUnit === 'mL' ? physical : density === null ? null : physical.div(density);
   if (unit === null) throw new PortionError('MISSING_SERVING_SIZE', field);
-  if (enteredUnit !== unit) {
-    if (food.densityGramsPerMl === null) throw new PortionError('MISSING_DENSITY', field);
-    amount = unit === 'g' ? amount.times(food.densityGramsPerMl) : amount.div(food.densityGramsPerMl);
-  }
+  const amount = unit === 'g' ? grams : ml;
+  if (amount === null) throw new PortionError('MISSING_DENSITY', field);
   // On a serving basis the reference amount counts servings, while amount records physical g or mL.
   const inReferenceUnits = food.referenceUnit === 'serving'
     ? (input.quantity === undefined ? amount.div(food.servingSize!) : new Decimal(input.quantity)) : amount;
   const factor = inReferenceUnits.div(food.referenceAmount);
   if (!factor.isPositive() || factor.isZero() || amount.isZero()) throw new PortionError('PORTION_OUT_OF_RANGE', field);
-  return { amount, unit, factor };
+  return { amount, unit, factor, grams, ml };
 }
 
 // Bind the preview to the exact source used for each input, including its portion and density.
@@ -84,14 +98,18 @@ export function mealPreviewTag(inputs: PortionItem[], catalog: ReadonlyMap<strin
 
 export function calculatePortions(inputs: PortionItem[], catalog: ReadonlyMap<string, Food>, historical: readonly (Food | undefined)[] = []): NutritionPreview {
   let knownMass = new Decimal(0);
+  let knownVolume = new Decimal(0);
   const sums = new Map<Nutrient, { amount: BigNumber; known: number }>();
   const items = inputs.map((input, index): NutritionPreview['items'][number] => {
     const field = 'items[' + index + ']';
     const food = historical[index] ?? catalog.get(input.foodId);
     if (!food) throw new PortionError('FOOD_NOT_FOUND', field + '.foodId');
-    const { amount, unit, factor } = normalizedPortion(food, input, field);
-    if (unit === 'g') knownMass = knownMass.plus(amount);
-    else if (food.densityGramsPerMl !== null) knownMass = knownMass.plus(amount.times(food.densityGramsPerMl));
+    const { amount, unit, factor, grams, ml } = normalizedPortion(food, input, field);
+    if (grams) {
+      knownMass = knownMass.plus(grams);
+      if (knownMass.gt(physicalMax)) throw new PortionError('CONVERTED_MASS_LIMIT', grams.gt(physicalMax) ? field : 'items');
+    }
+    if (ml) knownVolume = knownVolume.plus(ml);
     const values = {} as NutrientValues;
     for (const key of nutrients) {
       const value = food[key];
@@ -113,7 +131,8 @@ export function calculatePortions(inputs: PortionItem[], catalog: ReadonlyMap<st
     nutrientCompleteness[key] = !sum ? 'unknown' : sum.known === items.length ? 'complete' : 'partial';
   }
   const warnings: NutritionPreview['warnings'] = [];
-  if (knownMass.gt(5000)) warnings.push('HIGH_PORTION_MASS');
+  if (knownMass.gt(portionWarning)) warnings.push('HIGH_PORTION_MASS');
+  if (knownVolume.gt(portionWarning)) warnings.push('HIGH_PORTION_VOLUME');
   if (sums.get('energyKcal')?.amount.gt(3500)) warnings.push('HIGH_MEAL_ENERGY');
   return { items, totals, nutrientCompleteness, warnings };
 }

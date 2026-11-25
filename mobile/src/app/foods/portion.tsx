@@ -11,7 +11,7 @@ import { calculatePortion, getFood, getMealEditor, saveMeal } from '@/services/f
 import { loadProfile } from '@/services/profile';
 import { AccountRequestError } from '@/services/session';
 import {
-  basisText, mealLabels, numberText, nutrientLabels, nutrientText, permittedUnits, portionText, readPortion,
+  basisText, mealLabels, numberText, nutrientLabels, nutrientText, permittedUnits, portionText, checkMealPortions,
   type Food, type FoodUnit, type PortionInput,
 } from '@/utils/food';
 import { dayKey, displayDate, instant, normalizeTime, wallTime } from '@/utils/journal-time';
@@ -19,7 +19,8 @@ import { dayKey, displayDate, instant, normalizeTime, wallTime } from '@/utils/j
 type Preview = Awaited<ReturnType<typeof calculatePortion>>;
 type Estimate = { key: string; result?: Preview; error?: string; reloadEntry?: boolean };
 const warningText: Record<MealWarning, string> = {
-  HIGH_PORTION_MASS: 'Lượng thực phẩm vượt 5.000 g.',
+  HIGH_PORTION_MASS: 'Khối lượng thực phẩm vượt 5.000 g.',
+  HIGH_PORTION_VOLUME: 'Thể tích thực phẩm vượt 5.000 mL.',
   HIGH_MEAL_ENERGY: 'Năng lượng bữa này vượt 3.500 kcal.',
   HIGH_DAY_ENERGY: 'Tổng năng lượng đã ghi trong ngày sẽ vượt 15.000 kcal.',
 };
@@ -29,8 +30,8 @@ function estimateError(error: unknown) {
     if (error.code === 'VERSION_CONFLICT') return 'Bữa ăn đã được chỉnh sửa. Tải lại bản ghi để tiếp tục.';
     if (error.code === 'ENTRY_NOT_FOUND') return 'Bữa ăn này đã được xóa khỏi Nhật ký.';
     if (error.status === 400) {
-      const detail = error.body as { error?: { message?: string } } | null;
-      return detail?.error?.message || 'Hãy kiểm tra lượng và đơn vị đã nhập.';
+      const detail = error.body as { error?: { message?: string }; message?: string } | null;
+      return detail?.error?.message || detail?.message || 'Hãy kiểm tra lượng và đơn vị đã nhập.';
     }
     if (error.status === 404) return 'Thực phẩm hoặc tài khoản hiện không có để tính khẩu phần.';
     if (error.status === 401 || error.status === 403) return 'Phiên truy cập không còn hợp lệ. Vui lòng đăng nhập lại.';
@@ -57,8 +58,11 @@ function useEstimate(user: User, items: PortionItem[] | null, edit?: MealEditor)
   return { current: items && state?.key === key ? state : undefined, retry: () => setAttempt(n => n + 1) };
 }
 
-function EstimateCard({ state, input, invalid, retry }: { state?: Estimate; input: boolean; invalid: boolean; retry: () => void }) {
+function EstimateCard({ state, input, invalid, warnings, retry }: {
+  state?: Estimate; input: boolean; invalid: boolean; warnings: Preview['warnings']; retry: () => void;
+}) {
   const result = state?.result;
+  const notices = [...new Set([...warnings, ...(result?.warnings ?? [])])];
   return <View style={[f.info, f.block]} accessibilityLiveRegion="polite">
     <Text accessibilityRole="header" style={j.section}>Dinh dưỡng ước tính</Text>
     {result ? <>
@@ -66,11 +70,11 @@ function EstimateCard({ state, input, invalid, retry }: { state?: Estimate; inpu
       {nutrientLabels.slice(1).map(([name, label, suffix]) =>
         <View style={f.nutrientRow} key={name}><Text style={j.text}>{label}</Text>
           <Text style={j.strong}>{portionText(result.totals[name], suffix)}</Text></View>)}
-      {result.warnings.length > 0 && <Text style={j.strong} accessibilityRole="alert">
-        {result.warnings.map(w => warningText[w]).join(' ')} Hãy kiểm tra lại lượng đã nhập.</Text>}
     </> : state?.error ? <><ErrorMessage message={state.error} /><FoodLink label={state.reloadEntry ? 'Tải lại bản ghi' : 'Thử tính lại'} onPress={retry} /></>
       : <Text style={j.text}>{invalid ? 'Chưa tính được khi khẩu phần chưa hợp lệ.'
         : input ? 'Đang tính dinh dưỡng…' : 'Nhập lượng thực dùng để xem kết quả.'}</Text>}
+    {notices.length > 0 && <Text style={j.strong} accessibilityRole="alert">
+      {notices.map(w => warningText[w]).join(' ')} Hãy kiểm tra lại lượng đã nhập.</Text>}
   </View>;
 }
 
@@ -138,17 +142,13 @@ function PortionForm({ initialFood, user, date, zone, edit, reload }: {
   function editLine(values: Partial<LineField>) {
     setLines(before => before.map((row, i) => i === selected ? { ...row, ...values } : row));
   }
-  const items = useMemo(() => {
-    const result: PortionItem[] = [];
-    for (const row of lines) {
-      const amount = readPortion(row.text, row.unit, lineFood(row));
-      if (!amount) return null;
-      result.push({ foodId: row.food.foodId, ...amount });
-    }
-    return result;
-  }, [lines]);
+  const { items, errors, mealError, warnings } = useMemo(() => checkMealPortions(
+    lines.map(row => ({ text: row.text, unit: row.unit, food: lineFood(row) }))
+  ), [lines]);
   const { current, retry } = useEstimate(user, items, edit);
-  const invalid = !readPortion(value, unit, food) && (touched || value.trim() !== '');
+  const fieldError = (touched || value.trim() !== '') ? errors[selected] : '';
+  const otherInvalid = lines.findIndex((row, i) => i !== selected && !!errors[i]);
+  const errorText = fieldError || mealError || (otherInvalid >= 0 ? 'Kiểm tra khẩu phần của ' + lines[otherInvalid].food.foodName + '.' : '');
   const label = unit === 'serving' ? 'Số phần thực dùng' : unit === 'mL' ? 'Thể tích thực dùng' : 'Khối lượng thực dùng';
   const [mealType, setMealType] = useState<MealType>(edit?.mealType ?? 'snack');
   const [opened] = useState(() => edit?.loggedAt ?? new Date().toISOString());
@@ -261,15 +261,15 @@ function PortionForm({ initialFood, user, date, zone, edit, reload }: {
           }}><Text style={j.strong}>{option === 'serving' ? 'Phần' : option}</Text></Pressable>)}
       </View>}
       <Text style={ui.label}>{label}</Text>
-      <View style={[ui.inputBox, { marginTop: 0 }, focused && { borderColor: colors.primary, borderWidth: 2 }, invalid && { borderColor: colors.error, borderWidth: 2 }]}>
+      <View style={[ui.inputBox, { marginTop: 0 }, focused && { borderColor: colors.primary, borderWidth: 2 }, !!errorText && { borderColor: colors.error, borderWidth: 2 }]}>
         <TextInput accessibilityLabel={label} editable={!locked} keyboardType="decimal-pad" placeholder="Nhập số lượng" placeholderTextColor={colors.muted}
-          style={[ui.input, { outlineWidth: 0 }]} value={value} onChangeText={v => { editLine({ text: v }); setMessage(''); }}
-          onFocus={() => setFocused(true)} onBlur={() => { setFocused(false); setTouched(true); }} maxLength={20} />
+          style={[ui.input, { outlineWidth: 0 }]} value={value} onChangeText={v => { editLine({ text: v }); setTouched(true); setMessage(''); }}
+          onFocus={() => setFocused(true)} onBlur={() => { setFocused(false); setTouched(true); }} />
         <Text style={j.small}>{unit === 'serving' ? 'phần' : unit}</Text></View>
-      {invalid && <ErrorMessage message={'Nhập ' + label.toLowerCase() + ' lớn hơn 0' + (unit === 'serving' ? '.' : ' ' + unit + '.')} />}
+      {!!errorText && <ErrorMessage message={errorText} />}
       {unit === 'serving' && <Text style={j.small}>Một phần · {food.servingLabel || 'Phần theo nguồn'} · {numberText(food.servingSize!)} {food.servingUnit}</Text>}
     </View>
-    <EstimateCard state={current} input={!!items} invalid={invalid} retry={current?.reloadEntry ? reload : retry} />
+    <EstimateCard state={current} input={!!items} invalid={!!errorText} warnings={warnings} retry={current?.reloadEntry ? reload : retry} />
     {momentOpen && <MealMoment selected={mealType} time={time} date={date} zone={zone} close={() => setMomentOpen(false)}
       apply={(type, clock) => { setMealType(type); setTime(clock); setMomentOpen(false); setMessage(''); }} />}
     {warning && <JournalDialog title="Kiểm tra lại khẩu phần" onClose={() => setWarning(null)}>

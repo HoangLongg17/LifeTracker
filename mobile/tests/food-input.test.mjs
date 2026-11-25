@@ -78,6 +78,18 @@ test('mobile checks exact converted weight and separates volume warnings from ha
   assert.ok(checkMealPortions(pair).items);
   const large=checkMealPortions([...pair,{food:base,text:'0,1',unit:'g'}]); assert.equal(large.items,null); assert.match(large.mealError,/99\.999,9 g/);
 });
+test('multi-food meal portions retain each food and its own serving input', () => {
+  const rice=pick('usda-sr-169757'), bread=pick('usda-sr-172688');
+  const result=checkMealPortions([
+    { food:rice, text:'150', unit:'g' },
+    { food:bread, text:'2', unit:'serving' },
+  ]);
+  assert.deepEqual(result.items,[
+    { foodId:rice.foodId, consumedGrams:150 },
+    { foodId:bread.foodId, quantity:2 },
+  ]);
+  assert.deepEqual(result.errors,['','']);
+});
 test('journal localizes long amounts and sums a full day before rounding, preserving unknown and zero', () => {
   const meal=(kcal,state='complete')=>({totals:{energyKcal:kcal},nutrientCompleteness:{energyKcal:state}});
   assert.equal(savedAmountText({amount:12500.5,unit:'g'}),'12.500,5 g');

@@ -441,6 +441,8 @@ Các trường con cụ thể phải được nhóm thống nhất khi triển k
 | version   | integer        | Bắt đầu từ 1                               |
 | createdAt | timestamp      | Thời điểm Backend tạo bản ghi              |
 | updatedAt | timestamp      | Thời điểm Backend cập nhật bản ghi         |
+| validationStatus | string | `valid` cho số đo được chấp nhận            |
+| warningConfirmed | boolean | Xác nhận khi số đo ngoài khoảng cảnh báo   |
 
 #### Quy tắc xử lý
 
@@ -485,6 +487,18 @@ Quy tắc:
 - POST /me/weights: Thêm lần đo.
 - PATCH /me/weights/{entryId}: Cập nhật lần đo.
 - DELETE /me/weights/{entryId}: Xóa lần đo.
+
+Các request dùng Firebase ID Token đã xác minh để xác định UID; client không gửi `userId`.
+
+| Thao tác | Hợp đồng |
+| --- | --- |
+| `GET /me/weights?limit=30&cursor={entryId}&date={YYYY-MM-DD}` | Trả `{ items, nextCursor }`, sắp xếp theo phút đo giảm dần, sau đó `updatedAt DESC` và `entryId DESC`; `limit` từ 1 đến 100. `date` là tùy chọn để lọc theo `localDate`; cursor phải thuộc cùng ngày nếu có lọc. |
+| `POST /me/weights` | Nhận `entryId`, `weightKg`, `measuredAt` ISO-8601, `timeZone` và tùy chọn `warningConfirmed`; cùng ID/nội dung retry trả thành công, ID khác nội dung trả `409 ENTRY_ID_CONFLICT`. |
+| `GET /me/weights/{entryId}` | Chỉ trả bản ghi trong UID đã xác thực. |
+| `PATCH /me/weights/{entryId}` | Nhận `version` cùng ít nhất một trường sửa được; version cũ trả `409 VERSION_CONFLICT`. |
+| `DELETE /me/weights/{entryId}?version={version}` | Xóa theo version hiện tại; version cũ trả `409 VERSION_CONFLICT`, thành công trả `204`. |
+
+Tạo/sửa/xóa bản ghi và cập nhật `profiles/main.currentWeightKg` được commit trong cùng Firestore transaction. Khi không còn bản ghi hợp lệ, projection được đặt thành `null`.
 
 #### Truy vấn
 
@@ -626,6 +640,7 @@ Các nhóm trong recordStatusByCategory:
 | IX06  | foodCatalog  | status ASC    | nameNormalized ASC | Tra cứu thực phẩm, tùy chọn     |
 
 Các index trên là cấu hình đề xuất theo tài liệu thiết kế CSDL.
+API cân nặng lọc `date` trong backend sau truy vấn theo `measuredAt`; không yêu cầu composite index mới.
 
 ### 6.3. Quy định triển khai
 

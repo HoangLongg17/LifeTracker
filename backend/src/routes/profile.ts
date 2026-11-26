@@ -4,7 +4,8 @@ import {
   verifyAccount,
   type AccountHandler
 } from '../middlewares/verifyAccount';
-import { FieldValue, Timestamp, type DocumentReference, type Firestore } from 'firebase-admin/firestore';
+import { FieldValue, type Firestore } from 'firebase-admin/firestore';
+import { getLatestWeightKg } from '../services/weightHistory';
 type ProfileData = {
   displayName?: string;
   birthDate?: string | null;
@@ -19,8 +20,6 @@ type ProfileData = {
 const defaultUnits = { weight: 'kg', height: 'cm', water: 'mL' };
 const activityLevels = ['sedentary', 'light', 'moderate', 'active', 'very_active'];
 const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
-const isoDateTimePattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
-let weightIndexFallbackLogged = false;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -46,14 +45,6 @@ function validTimeZone(value: unknown): value is string {
   }
 }
 
-function localDate(date: Date, timeZone: string) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
 function profileResponse(uid: string, data: ProfileData, currentWeightKg: number | null) {
   return {
     uid,
@@ -67,63 +58,6 @@ function profileResponse(uid: string, data: ProfileData, currentWeightKg: number
     preferredUnits: { ...defaultUnits, ...data.preferredUnits },
     timeZone: data.timeZone ?? 'Asia/Ho_Chi_Minh',
   };
-}
-
-function isMissingCompositeIndex(error: unknown) {
-  if (!isRecord(error)) return false;
-  const code = String(error.code ?? '');
-  const message = typeof error.message === 'string' ? error.message : '';
-  return /failed-precondition|(^|[^0-9])9([^0-9]|$)/i.test(code)
-    && /index/i.test(message);
-}
-
-async function getCurrentWeightWithoutCompositeIndex(userRef: DocumentReference) {
-  const weights = userRef.collection('weightLogs');
-  let page = await weights.orderBy('measuredAt', 'desc').limit(100).get();
-  while (!page.empty) {
-    const latestValid = page.docs.find(document => document.get('validationStatus') === 'valid');
-    if (latestValid) {
-      const measuredAt = latestValid.get('measuredAt');
-      if (!(measuredAt instanceof Timestamp)) throw new Error('Invalid weight measuredAt');
-      const tiedWeights = await weights.where('measuredAt', '==', measuredAt).get();
-      const validWeights = tiedWeights.docs
-        .filter(document => document.get('validationStatus') === 'valid')
-        .sort((left, right) => {
-          const leftUpdated = left.get('updatedAt');
-          const rightUpdated = right.get('updatedAt');
-          const updatedDifference = (rightUpdated instanceof Timestamp ? rightUpdated.toMillis() : 0)
-            - (leftUpdated instanceof Timestamp ? leftUpdated.toMillis() : 0);
-          if (updatedDifference !== 0) return updatedDifference;
-          return String(right.get('entryId')).localeCompare(String(left.get('entryId')));
-        });
-      const value = validWeights[0]?.get('weightKg');
-      return typeof value === 'number' ? value : null;
-    }
-    const lastDocument = page.docs[page.docs.length - 1];
-    page = await weights.orderBy('measuredAt', 'desc').startAfter(lastDocument).limit(100).get();
-  }
-  return null;
-}
-
-async function getCurrentWeight(userRef: DocumentReference) {
-  const weights = userRef.collection('weightLogs');
-  try {
-    const latest = await weights.where('validationStatus', '==', 'valid')
-      .orderBy('measuredAt', 'desc')
-      .orderBy('updatedAt', 'desc')
-      .orderBy('entryId', 'desc')
-      .limit(1)
-      .get();
-    const value = latest.empty ? null : latest.docs[0].get('weightKg');
-    return typeof value === 'number' ? value : null;
-  } catch (error) {
-    if (!isMissingCompositeIndex(error)) throw error;
-    if (!weightIndexFallbackLogged) {
-      console.warn('Composite weightLogs index is unavailable; using ordered fallback.');
-      weightIndexFallbackLogged = true;
-    }
-    return getCurrentWeightWithoutCompositeIndex(userRef);
-  }
 }
 
 function validateProfilePatch(input: unknown) {
@@ -249,7 +183,7 @@ export function profileRouter(auth: Pick<Auth, 'verifyIdToken'>, db: Firestore) 
         res.status(404).json({ code: 'ACCOUNT_NOT_INITIALIZED' });
         return;
       }
-      res.json(profileResponse(uid, profile.data() as ProfileData, await getCurrentWeight(userRef)));
+      res.json(profileResponse(uid, profile.data() as ProfileData, await getLatestWeightKg(userRef)));
     } catch (error) {
       logStorageFailure('profile-read', error);
       res.status(503).json({ code: 'PROFILE_UNAVAILABLE' });
@@ -324,104 +258,13 @@ export function profileRouter(auth: Pick<Auth, 'verifyIdToken'>, db: Firestore) 
         res.status(denied ? 403 : 404).json({ code: denied ?? result.status });
         return;
       }
-      res.json(profileResponse(uid, updatedProfile, await getCurrentWeight(userRef)));
+      res.json(profileResponse(uid, updatedProfile, await getLatestWeightKg(userRef)));
     } catch (error) {
       logStorageFailure('profile-update', error);
       res.status(503).json({ code: 'PROFILE_UNAVAILABLE' });
     }
   };
   router.patch('/me/profile', verify, updateProfile);
-
-  const createWeight: AccountHandler = async (req, res) => {
-    if (!isRecord(req.body)) {
-      res.status(400).json({ code: 'VALIDATION_ERROR', fields: { form: 'INVALID_BODY' } });
-      return;
-    }
-    const input = req.body;
-    const fields: Record<string, string> = {};
-    const allowed = new Set(['entryId', 'weightKg', 'measuredAt', 'timeZone', 'warningConfirmed']);
-    for (const key of Object.keys(input)) {
-      if (!allowed.has(key)) fields[key] = 'FIELD_NOT_ALLOWED';
-    }
-    if (typeof input.entryId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(input.entryId)) {
-      fields.entryId = 'INVALID_ENTRY_ID';
-    }
-    if (typeof input.weightKg !== 'number' || !Number.isFinite(input.weightKg) || input.weightKg <= 0) {
-      fields.weightKg = 'INVALID_WEIGHT';
-    } else if ((input.weightKg < 20 || input.weightKg > 300) && input.warningConfirmed !== true) {
-      fields.weightKg = 'WARNING_CONFIRMATION_REQUIRED';
-    }
-    if (typeof input.measuredAt !== 'string' || !isoDateTimePattern.test(input.measuredAt)
-        || !validCalendarDate(input.measuredAt.slice(0, 10))
-        || !Number.isFinite(Date.parse(input.measuredAt))
-        || Date.parse(input.measuredAt) > Date.now() + 5 * 60 * 1000) {
-      fields.measuredAt = 'INVALID_MEASURED_AT';
-    }
-    if (!validTimeZone(input.timeZone)) fields.timeZone = 'INVALID_TIME_ZONE';
-    if ('warningConfirmed' in input && typeof input.warningConfirmed !== 'boolean') {
-      fields.warningConfirmed = 'INVALID_WARNING_CONFIRMATION';
-    }
-    if (Object.keys(fields).length > 0) {
-      res.status(400).json({ code: 'VALIDATION_ERROR', fields });
-      return;
-    }
-
-    const { uid } = res.locals.identity;
-    const userRef = db.collection('users').doc(uid);
-    const weightRef = userRef.collection('weightLogs').doc(input.entryId as string);
-    const measuredAt = new Date(input.measuredAt as string);
-    try {
-      const result = await db.runTransaction(async transaction => {
-        const account = await transaction.get(userRef);
-        const denied = account.exists && accessError(account.get('status'));
-        if (denied) return { status: denied };
-        const profile = await transaction.get(userRef.collection('profiles').doc('main'));
-        if (!account.exists || !profile.exists) return { status: 'ACCOUNT_NOT_INITIALIZED' };
-        const existing = await transaction.get(weightRef);
-        const same = existing.exists
-          && existing.get('weightKg') === input.weightKg
-          && existing.get('measuredAt')?.toDate().getTime() === measuredAt.getTime()
-          && existing.get('timeZone') === input.timeZone
-          && existing.get('warningConfirmed') === (input.warningConfirmed === true);
-        if (existing.exists) return { status: same ? 'existing' : 'ENTRY_ID_CONFLICT' };
-        const timestamp = FieldValue.serverTimestamp();
-        transaction.create(weightRef, {
-          entryId: input.entryId,
-          userId: uid,
-          weightKg: input.weightKg,
-          measuredAt: Timestamp.fromDate(measuredAt),
-          timeZone: input.timeZone,
-          localDate: localDate(measuredAt, input.timeZone as string),
-          warningConfirmed: input.warningConfirmed === true,
-          validationStatus: 'valid',
-          version: 1,
-          source: 'manual',
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        });
-        return { status: 'created' };
-      });
-      if (result.status === 'ENTRY_ID_CONFLICT') {
-        res.status(409).json({ code: result.status });
-        return;
-      }
-      if (result.status !== 'created' && result.status !== 'existing') {
-        const denied = accessError(result.status);
-        res.status(denied ? 403 : 404).json({ code: denied ?? result.status });
-        return;
-      }
-      res.status(result.status === 'created' ? 201 : 200).json({
-        entryId: input.entryId,
-        weightKg: input.weightKg,
-        measuredAt: measuredAt.toISOString(),
-        timeZone: input.timeZone,
-      });
-    } catch (error) {
-      logStorageFailure('weight-create', error);
-      res.status(503).json({ code: 'PROFILE_UNAVAILABLE' });
-    }
-  };
-  router.post('/me/weights', verify, createWeight);
 
   const bootstrap: AccountHandler = async (_req, res) => {
     const { uid } = res.locals.identity;
@@ -451,6 +294,7 @@ export function profileRouter(auth: Pick<Auth, 'verifyIdToken'>, db: Firestore) 
             displayName: '',
             birthYear: null,
             heightCm: null,
+            currentWeightKg: null,
             notificationSettings: {
               enabled: false,
             },

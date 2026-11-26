@@ -354,6 +354,9 @@ export default function PersonalProfileScreen() {
                 onChangeText={value => setField('weight', value)} placeholder={draft.units.weight === 'kg' ? 'VD: 65' : 'VD: 143'}
                 inputMode="decimal" error={errors.weight} />
               <Text style={styles.helper}>Số đo cân nặng mới được thêm vào lịch sử, không ghi đè các lần đo trước.</Text>
+              <Pressable accessibilityRole="button" onPress={() => router.push('/weight-history')} style={styles.historyLink}>
+                <Text style={ui.link}>Xem lịch sử cân nặng</Text>
+              </Pressable>
               <View style={styles.field}>
                 <Text style={ui.label}>Mức độ vận động</Text>
                 <View style={styles.activityList}>
@@ -433,6 +436,7 @@ const styles = StyleSheet.create({
   fieldInvalid: { borderColor: colors.error },
   fieldError: { color: colors.error, fontFamily: 'Roboto_400Regular', fontSize: 12, lineHeight: 17 },
   helper: { color: colors.muted, fontFamily: 'Roboto_400Regular', fontSize: 12, lineHeight: 17 },
+  historyLink: { alignSelf: 'flex-start', minHeight: 34, justifyContent: 'center' },
   activityList: { gap: 7 },
   activity: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: colors.divider, borderRadius: 12 },
   activitySelected: { borderColor: colors.primary, backgroundColor: colors.pale },

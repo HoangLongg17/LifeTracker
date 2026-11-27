@@ -34,6 +34,8 @@ export function storageError(
       isRecord(error) && 'code' in error
         ? String(error.code)
         : 'UNKNOWN',
+    message: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
   });
 
   res.status(503).json({

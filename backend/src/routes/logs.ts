@@ -1,3 +1,4 @@
+import { logHistoryRouter } from './logHistory';
 import { convertWaterToMl } from '../services/waterUnits';
 import { Router } from 'express';
 import type { Auth } from 'firebase-admin/auth';
@@ -216,7 +217,7 @@ export function logsRouter(
   router.use('/me/logs/meal', mealLogsRouter(db));
   router.use('/me/logs/activity', timedLogRouter('activity', db));
   router.use('/me/logs/sleep', timedLogRouter('sleep', db));
-
+  router.use('/me/logs', logHistoryRouter(db));
   // TẠO NHẬT KÝ NƯỚC
   router.post('/me/logs/water', async (req, res) => {
     const body = validateWaterBody(req.body, 'create');

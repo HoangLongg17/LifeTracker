@@ -1,5 +1,6 @@
+import { router, useLocalSearchParams, usePreventRemove } from 'expo-router';
 import type { User } from 'firebase/auth';
-import { router, useLocalSearchParams } from 'expo-router';
+
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 import { AccountButton, accountStyles as ui, colors, ErrorMessage } from '@/components/account-ui';
@@ -79,6 +80,26 @@ function WeightForm({ user, date, editId, returnTo }: {
   const [formKey, setFormKey] = useState(0);
   const savingRef = useRef(false);
   const pending = useRef<{ id: string; fingerprint: string } | null>(null);
+  const [initialSnapshot, setInitialSnapshot] = useState({ weight: '', date: '', time: '' });
+const [hasPending, setHasPending] = useState(false);
+const [confirmLeave, setConfirmLeave] = useState(false);
+const allowExitRef = useRef(false);
+const leaveAction = useRef<() => void>(() => {});
+
+const isDirty =
+  weightText !== initialSnapshot.weight ||
+  dateText !== initialSnapshot.date ||
+  timeText !== initialSnapshot.time;
+
+usePreventRemove(!allowExitRef.current && (isDirty || saving || hasPending), ({ repeat }) => {
+  if (allowExitRef.current) {
+    repeat();
+    return;
+  }
+  if (savingRef.current) return;
+  leaveAction.current = repeat;
+  setConfirmLeave(true);
+});
   const paramsDate = dayKey(date);
 
   useEffect(() => {
@@ -100,6 +121,12 @@ function WeightForm({ user, date, editId, returnTo }: {
       setWeightText(record
         ? numberText(weightValueInUnit(record.weightKg, profile.preferredUnits.weight))
         : '');
+      const initDate = displayDate(initialDay);
+      const initTime = local?.time ?? wallTime(Date.now(), zone).time;
+      const initWeight = record
+    ? numberText(weightValueInUnit(record.weightKg, profile.preferredUnits.weight))
+    : '';
+setInitialSnapshot({ weight: initWeight, date: initDate, time: initTime });  
       setWeightTouched(false);
       setSaveAttempted(false);
       setTimeError('');
@@ -157,6 +184,7 @@ function WeightForm({ user, date, editId, returnTo }: {
     const fingerprint = JSON.stringify(body);
     if (!pending.current || pending.current.fingerprint !== fingerprint) {
       pending.current = { id: entryId(), fingerprint };
+      setHasPending(true);
     }
 
     savingRef.current = true;
@@ -168,6 +196,7 @@ function WeightForm({ user, date, editId, returnTo }: {
         : await createWeight(user, { ...body, entryId: pending.current.id });
       pending.current = null;
       setWarningOpen(false);
+      allowExitRef.current = true; setHasPending(false);
       if (returnTo === 'journal') {
         const notice = record
           ? `Đã cập nhật lần đo ${formatWeight(saved.weightKg, unit)}.`
@@ -283,6 +312,15 @@ function WeightForm({ user, date, editId, returnTo }: {
       <AccountButton label="Xác nhận lưu" busy={saving} onPress={() => void save(true)} />
       <AccountButton label="Kiểm tra lại" outline onPress={() => setWarningOpen(false)} />
     </JournalDialog>}
+    {confirmLeave && <JournalDialog title="Bỏ thay đổi?" onClose={() => setConfirmLeave(false)}>
+  <Text style={j.text}>
+    {hasPending
+      ? 'Lần lưu trước chưa được xác nhận. Bạn vẫn muốn rời màn hình?'
+      : 'Dữ liệu cân nặng chưa được lưu sẽ mất. Bạn có muốn rời đi không?'}
+  </Text>
+  <AccountButton label="Rời đi" onPress={() => { setConfirmLeave(false); leaveAction.current(); }} />
+  <AccountButton label="Tiếp tục nhập" outline onPress={() => setConfirmLeave(false)} />
+</JournalDialog>}
   </JournalPage>;
 }
 

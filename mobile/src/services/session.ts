@@ -25,7 +25,7 @@ type AccountResponse = { uid: string; ready: true; status?: string; displayName?
 export async function apiRequest(
   user: User,
   path: string,
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   body?: unknown,
   refresh = false,
 ): Promise<unknown> {

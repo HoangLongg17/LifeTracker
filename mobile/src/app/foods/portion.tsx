@@ -113,7 +113,7 @@ function FoodPicker({ user, close, select }: { user: User; close: () => void; se
         <Text style={j.small}>Nguồn: {food.foodSource}</Text>
         <Text style={j.link}>Thêm món này</Text>
       </Pressable>)}
-      {key && result?.page?.items.length === 0 && !result.error &&
+      {!!key && result?.page?.items.length === 0 && !result.error &&
         <Text style={j.small}>Không tìm thấy thực phẩm phù hợp. Thử tên khác.</Text>}
     </ScrollView>
     <AccountButton outline label="Đóng" onPress={close} />

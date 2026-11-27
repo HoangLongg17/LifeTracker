@@ -75,11 +75,11 @@ export default function FoodSearch() {
         </Pressable>
         <FoodLink label="Chọn khẩu phần" onPress={() => open(food, '/foods/portion')} />
       </View>)}
-      {shown?.error && <FoodError message={shown.error} retry={() => {
+      {!!shown?.error && <FoodError message={shown.error} retry={() => {
         if (page?.nextCursor && !shown.reset) void request(generation.current, page.nextCursor);
         else setAttempt(n => n + 1);
       }} />}
-      {page?.nextCursor && !shown?.error && (shown?.busy ? <LoadingFood />
+      {!!page?.nextCursor && !shown?.error && (shown?.busy ? <LoadingFood />
         : <FoodLink label="Xem thêm thực phẩm" onPress={() => { void request(generation.current, page.nextCursor!); }} />)}
     </View></JournalPage>;
 }

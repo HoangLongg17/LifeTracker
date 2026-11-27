@@ -27,6 +27,25 @@ function numberText(value: number) {
     .replace('.', ',');
 }
 
+function normalizeMeasurementDate(value: string) {
+  const raw = value.trim();
+  const strict = dayKey(raw);
+  if (strict) return displayDate(strict);
+  const parts = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(raw);
+  if (!parts) return null;
+  const normalized = dayKey(`${parts[3]}-${parts[2].padStart(2, '0')}-${parts[1].padStart(2, '0')}`);
+  return normalized ? displayDate(normalized) : null;
+}
+
+function normalizeMeasurementTime(value: string) {
+  const parts = /^(\d{1,2}):(\d{1,2})$/.exec(value.trim());
+  if (!parts) return null;
+  const hour = Number(parts[1]);
+  const minute = Number(parts[2]);
+  if (hour > 23 || minute > 59) return null;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
 function requestMessage(error: unknown) {
   if (error instanceof AccountRequestError) {
     if (error.code === 'VERSION_CONFLICT') return 'Bản ghi đã thay đổi ở nơi khác. Hãy tải lại rồi thử lại.';
@@ -175,13 +194,19 @@ function WeightForm({ user, date, editId, returnTo }: {
   }
 
   function applyTime() {
-    const next = instant({ date: draftDate, time: draftTime }, timeZone, record?.measuredAt);
+    const normalizedDate = normalizeMeasurementDate(draftDate);
+    const normalizedTime = normalizeMeasurementTime(draftTime);
+    if (!normalizedDate || !normalizedTime) {
+      setTimeError('Nhập ngày và giờ đo hợp lệ, không ở tương lai.');
+      return;
+    }
+    const next = instant({ date: normalizedDate, time: normalizedTime }, timeZone, record?.measuredAt);
     if (!next || Date.parse(next) > Date.now() + 5 * 60 * 1000) {
       setTimeError('Nhập ngày và giờ đo hợp lệ, không ở tương lai.');
       return;
     }
-    setDateText(displayDate(dayKey(draftDate) ?? draftDate));
-    setTimeText(draftTime);
+    setDateText(normalizedDate);
+    setTimeText(normalizedTime);
     setTimeError('');
     setError('');
     setTimeOpen(false);

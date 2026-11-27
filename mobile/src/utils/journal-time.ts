@@ -1,9 +1,9 @@
 export type WallTime = { date: string; time: string };
 
 export function normalizeTime(raw: string): string | null {
-  const value = raw.trim();
-  if (!/^(?:[01]?\d|2[0-3]):[0-5]\d$/.test(value)) return null;
-  return value.padStart(5, '0');
+  const value = raw;
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) return null;
+  return value;
 }
 
 export function displayDate(day: string) {

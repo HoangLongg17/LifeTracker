@@ -47,6 +47,8 @@ function Navigation() {
           <Stack.Screen name="personal-profile" />
           <Stack.Screen name="water" />
           <Stack.Screen name="water/new" />
+          <Stack.Screen name="weight-history" />
+          <Stack.Screen name="weight-entry" />
         </Stack.Protected>
       </Stack>
     </ThemeProvider>

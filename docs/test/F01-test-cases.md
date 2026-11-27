@@ -41,6 +41,7 @@
 | **TC-F01-15** | Đăng ký khi chưa tick xác nhận phạm vi & quyền riêng tư | FR-01.05 | Nhập đủ email và mật khẩu hợp lệ nhưng bỏ trống ô checkbox đồng ý. | Không cho phép tạo tài khoản; hiển thị nhắc nhở người dùng cần đọc và xác nhận thông tin dữ liệu cá nhân. |
 | **TC-F01-16** | Cập nhật chiều cao hoặc cân nặng `<= 0` hoặc `NaN` | NFR-11, AT-35 | Gửi `PATCH /api/v1/me/profile` với `heightCm: -170` hoặc `currentWeightKg: 0`. | Backend trả `400 Bad Request` kèm `fieldErrors` chỉ rõ trường sai; không lưu vào Firestore. |
 | **TC-F01-17** | Cập nhật chiều cao / cân nặng ngoài dải cảnh báo (50–250cm, 20–300kg) | Mục 7.1, AT-35 | Nhập cân nặng `350` kg trên form *Thông tin cá nhân* và bấm *Lưu thông tin*. | Hiển thị hộp thoại cảnh báo yêu cầu xác nhận lại số đo bất thường; chỉ lưu khi người dùng xác nhận. |
+| **TC-F01-17A** | Giới hạn cứng cân nặng >= 1000 kg | NFR-11, AT-35 | Nhập cân nặng `1000` kg hoặc lớn hơn, có hoặc không có xác nhận cảnh báo. | Backend và form từ chối giá trị bằng lỗi cân nặng cứng; không lưu vào lịch sử hoặc hồ sơ. |
 | **TC-F01-18** | Ngày sinh ở tương lai hoặc mâu thuẫn giữa Ngày sinh và Năm sinh | Mục 6.3, Mục 7.1 | Nhập `birthDate: "2030-01-01"` hoặc nhập đồng thời `birthDate: "1995-05-15"` và `birthYear: 1999`. | Backend từ chối với mã `400 Bad Request` và thông báo lỗi nhất quán thời gian. |
 | **TC-F01-19** | Múi giờ IANA không hợp lệ | BR-05, NFR-11 | Gửi `timeZone: "Mars/Phobos"` hoặc chuỗi rỗng. | Backend từ chối với mã `400 Bad Request`. |
 

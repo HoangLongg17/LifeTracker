@@ -112,6 +112,51 @@ test('Edit and delete a meal through its journal actions', { skip: !local }, asy
       assert.equal((await call('GET',path)).status,404);
       assert.equal((await call('POST','',seed)).status,409);
     });
+    await t.test('removing an earlier item preserves the remaining item snapshot after catalog updates', async () => {
+      const cabbageRef = db.collection('foodCatalog').doc(cabbageId);
+      const breadRef = db.collection('foodCatalog').doc(breadId);
+      await cabbageRef.update({status:'active'});
+      await breadRef.update({status:'active'});
+      const entryId = 'shifted-items';
+      const loggedAt = '2026-01-16T09:04:47.123Z';
+      const items = [cabbage, bread];
+      assert.equal((await call('POST','',{
+        entryId, loggedAt, timeZone:common.timeZone, mealType:'snack', items,
+      })).status,201);
+      const original = (await account.collection('mealLogs').doc(entryId).get()).data()!;
+      const retainedItem = original.items[1];
+      const catalogCabbage = (await cabbageRef.get()).data()!;
+      await cabbageRef.update({energyKcal:catalogCabbage.energyKcal + 100, version:catalogCabbage.version + 1});
+      assert.equal((await call('PATCH','/'+entryId,{
+        version:1, loggedAt, timeZone:common.timeZone, mealType:'snack', items:[bread],
+      })).status,200);
+      const updated = (await account.collection('mealLogs').doc(entryId).get()).data()!;
+      assert.equal(updated.items.length,1);
+      assert.deepEqual(updated.items[0],retainedItem);
+      assert.equal(updated.totals.energyKcal,retainedItem.energyKcal);
+    });
+    await t.test('a changed duplicate line uses the current source while an unchanged line keeps its snapshot', async () => {
+      const cabbageRef = db.collection('foodCatalog').doc(cabbageId);
+      const entryId = 'duplicate-items';
+      const loggedAt = '2026-01-17T09:04:47.123Z';
+      const servings = [
+        { foodId:cabbageId, consumedGrams:100 },
+        { foodId:cabbageId, consumedGrams:200 },
+      ];
+      assert.equal((await call('POST','',{
+        entryId, loggedAt, timeZone:common.timeZone, mealType:'snack', items:servings,
+      })).status,201);
+      const original = (await account.collection('mealLogs').doc(entryId).get()).data()!;
+      const catalogCabbage = (await cabbageRef.get()).data()!;
+      await cabbageRef.update({energyKcal:catalogCabbage.energyKcal + 10, version:catalogCabbage.version + 1});
+      assert.equal((await call('PATCH','/'+entryId,{
+        version:1, loggedAt, timeZone:common.timeZone, mealType:'snack',
+        items:[{foodId:cabbageId,consumedGrams:200},servings[1]],
+      })).status,200);
+      const updated = (await account.collection('mealLogs').doc(entryId).get()).data()!;
+      assert.equal(updated.items[0].referenceSnapshot.nutrients.energyKcal,catalogCabbage.energyKcal + 10);
+      assert.deepEqual(updated.items[1],original.items[1]);
+    });
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
     await db.terminate(); await deleteApp(app);

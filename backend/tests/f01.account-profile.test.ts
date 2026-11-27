@@ -4,6 +4,7 @@ import express from 'express';
 import type { Auth } from 'firebase-admin/auth';
 import { type Firestore } from 'firebase-admin/firestore';
 import { profileRouter } from '../src/routes/profile';
+import { weightsRouter } from '../src/routes/weights';
 
 type StoredDoc = Record<string, unknown>;
 
@@ -17,6 +18,7 @@ function createTestServer() {
       orderBy: () => ({
         orderBy: () => ({
           orderBy: () => ({
+            get: emptyQueryResult,
             limit: () => ({ get: emptyQueryResult }),
           }),
         }),
@@ -24,6 +26,7 @@ function createTestServer() {
       get: emptyQueryResult,
     }),
     orderBy: () => ({
+      get: emptyQueryResult,
       limit: () => ({ get: emptyQueryResult }),
     }),
   });
@@ -45,7 +48,7 @@ function createTestServer() {
     runTransaction: async (fn: (tx: unknown) => unknown) => {
       const pending = new Map<string, StoredDoc>();
       const result = await fn({
-        get: async (r: { path: string }) => snapshot(r),
+        get: async (r: { path?: string }) => r.path ? snapshot({ path: r.path }) : emptyQueryResult(),
         create: (r: { path: string }, value: StoredDoc) => {
           pending.set(r.path, value);
         },
@@ -73,6 +76,7 @@ function createTestServer() {
   const app = express();
   app.use(express.json());
   app.use(profileRouter(auth, db));
+  app.use(weightsRouter(auth, db));
   return { app, docs };
 }
 

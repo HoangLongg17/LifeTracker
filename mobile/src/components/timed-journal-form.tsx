@@ -10,7 +10,7 @@ import { loadProfile } from '@/services/profile';
 import { AccountRequestError, apiRequest } from '@/services/session';
 import { activities, isCrossTypeOverlap, journalError, readTimedEntry, saveTimedEntry, type ActivityType, type Kind, type TimedEntry, type TimedInput } from '@/services/timed-journal';
 import { evaluate, initialDraft, type Draft } from '@/utils/journal-form';
-import { dayKey, displayDate, durationText, normalizeTime, type WallTime } from '@/utils/journal-time';
+import { dayKey, displayDate, durationText, type WallTime } from '@/utils/journal-time';
 
 type Boot = { zone: string; entry?: TimedEntry; draft: Draft };
 type Pending = { input: TimedInput; minutes: number };
@@ -27,10 +27,7 @@ function MomentInputs({ label, value, change, locked, activity }: {
   const date = <TextInput key="date" accessibilityLabel={'Ngày ' + label} editable={!locked} placeholder="DD/MM/YYYY" maxLength={10}
     value={value.date} onChangeText={date => change({ ...value, date })} style={[ui.input, { flex: 0, minWidth: 96 }]} />;
   const time = <TextInput key="time" accessibilityLabel={'Giờ ' + label} editable={!locked} placeholder="HH:mm" maxLength={5}
-    value={value.time} onChangeText={time => change({ ...value, time })} onBlur={() => {
-      const formatted = normalizeTime(value.time);
-      if (formatted && formatted !== value.time) change({ ...value, time: formatted });
-    }} style={[ui.input, { flex: 0, minWidth: 52 }]} />;
+    value={value.time} onChangeText={time => change({ ...value, time })} style={[ui.input, { flex: 0, minWidth: 52 }]} />;
   return <>{activity ? time : date}<Text style={j.small}>·</Text>{activity ? date : time}</>;
 }
 function matchesSaved(entry: TimedEntry, input: TimedInput) {

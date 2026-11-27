@@ -180,10 +180,12 @@ export default function PersonalProfileScreen() {
       && Math.abs(heightCm * (draft.units.height === 'in' ? 2.54 : 1) - (profile?.heightCm ?? 0)) > heightEpsilonCm;
     const weightChanged = weightKg !== null && Number.isFinite(weightKg)
       && Math.abs(weightKg - (profile?.currentWeightKg ?? 0)) > weightEpsilonKg;
+    const weightHardLimitExceeded = weightChanged && weightKg! >= 1000;
     const heightOutOfRange = heightChanged
       && (heightCm! * (draft.units.height === 'in' ? 2.54 : 1) < 50
         || heightCm! * (draft.units.height === 'in' ? 2.54 : 1) > 250);
-    const weightOutOfRange = weightChanged && weightKg! > 0 && (weightKg! < 20 || weightKg! > 300);
+    const weightOutOfRange = weightChanged && weightKg! > 0 && !weightHardLimitExceeded
+      && (weightKg! < 20 || weightKg! > 300);
     return heightOutOfRange || weightOutOfRange;
   }, [draft, profile]);
 
@@ -226,6 +228,9 @@ export default function PersonalProfileScreen() {
     const weight = numericValue(draft.weight);
     const weightKg = weight === null ? null : weight / (draft.units.weight === 'lb' ? 2.2046226218 : 1);
     if (weight !== null && (!Number.isFinite(weightKg) || weightKg! <= 0)) nextErrors.weight = 'Cân nặng phải là số lớn hơn 0.';
+    if (weightKg !== null && Number.isFinite(weightKg) && weightKg >= 1000) {
+      nextErrors.weight = 'Cân nặng không được đạt 1000 kg trở lên.';
+    }
     try {
       new Intl.DateTimeFormat('en-US', { timeZone: draft.timeZone }).format();
     } catch {
@@ -354,6 +359,9 @@ export default function PersonalProfileScreen() {
                 onChangeText={value => setField('weight', value)} placeholder={draft.units.weight === 'kg' ? 'VD: 65' : 'VD: 143'}
                 inputMode="decimal" error={errors.weight} />
               <Text style={styles.helper}>Số đo cân nặng mới được thêm vào lịch sử, không ghi đè các lần đo trước.</Text>
+              <Pressable accessibilityRole="button" onPress={() => router.push('/weight-history')} style={styles.historyLink}>
+                <Text style={ui.link}>Xem lịch sử cân nặng</Text>
+              </Pressable>
               <View style={styles.field}>
                 <Text style={ui.label}>Mức độ vận động</Text>
                 <View style={styles.activityList}>
@@ -433,6 +441,7 @@ const styles = StyleSheet.create({
   fieldInvalid: { borderColor: colors.error },
   fieldError: { color: colors.error, fontFamily: 'Roboto_400Regular', fontSize: 12, lineHeight: 17 },
   helper: { color: colors.muted, fontFamily: 'Roboto_400Regular', fontSize: 12, lineHeight: 17 },
+  historyLink: { alignSelf: 'flex-start', minHeight: 34, justifyContent: 'center' },
   activityList: { gap: 7 },
   activity: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: colors.divider, borderRadius: 12 },
   activitySelected: { borderColor: colors.primary, backgroundColor: colors.pale },

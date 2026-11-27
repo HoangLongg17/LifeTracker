@@ -65,13 +65,33 @@ function recordedFood(item: DocumentData): Food {
 }
 
 async function mealSources(db: Firestore, tx: Transaction, items: PortionItem[], previous?: DocumentData) {
-  // Unmodified lines keep their original source, even when the catalog changed after recording.
-  const historical = items.map((item, i) => {
-    const old = previous?.items[i];
-    if (!old || old.foodId !== item.foodId) return undefined;
+  // Match unchanged lines by food and portion so removing another line cannot refresh their snapshot.
+  const previousItems: DocumentData[] = Array.isArray(previous?.items) ? previous.items : [];
+  const matched = new Set<number>();
+  const historical: (Food | undefined)[] = new Array(items.length);
+  const unchanged = (item: PortionItem, old: DocumentData) => {
+    if (old.foodId !== item.foodId) return false;
     const input = recordedInput(old);
     return input.quantity === item.quantity && input.consumedGrams === item.consumedGrams &&
-      input.consumedMl === item.consumedMl ? recordedFood(old) : undefined;
+      input.consumedMl === item.consumedMl;
+  };
+  items.forEach((item, i) => {
+    const old = previousItems[i];
+    if (old && unchanged(item, old)) {
+      matched.add(i);
+      historical[i] = recordedFood(old);
+    }
+  });
+  items.forEach((item, i) => {
+    if (historical[i]) return;
+    const index = previousItems.findIndex((old, oldIndex) => {
+      if (matched.has(oldIndex)) return false;
+      return unchanged(item, old);
+    });
+    if (index >= 0) {
+      matched.add(index);
+      historical[i] = recordedFood(previousItems[index]);
+    }
   });
   const ids = [...new Set(items.filter((_, i) => !historical[i]).map(item => item.foodId))];
   const foods = ids.length ? await firestoreCatalog(db).byIds(ids, tx) : new Map<string, Food>();

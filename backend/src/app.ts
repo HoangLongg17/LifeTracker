@@ -4,6 +4,7 @@ import { logsRouter } from './routes/logs';
 import { getApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { profileRouter } from "./routes/profile";
+import { weightsRouter } from "./routes/weights";
 
 import "dotenv/config";
 import express from "express";
@@ -29,6 +30,7 @@ if (process.env.NODE_ENV === "development") {
   }));
 }
 app.use(profileRouter(getAuth(), db));
+app.use(weightsRouter(getAuth(), db));
 app.use(foodsRouter(getAuth(), db));
 app.use(logsRouter(getAuth(), db));
 app.use(waterReadRouter(getAuth(), db));

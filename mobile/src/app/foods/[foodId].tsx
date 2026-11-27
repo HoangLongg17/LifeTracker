@@ -26,7 +26,7 @@ export default function FoodDetail() {
         {!!food.retrievedAt && <Text style={j.small}>Ngày lấy dữ liệu (UTC) · {food.retrievedAt.slice(0, 10)}</Text>}
         {food.servingSize != null && <Text style={j.small}>Một phần · {food.servingLabel || 'Phần theo nguồn'} · {numberText(food.servingSize)} {food.servingUnit}</Text>}
         {food.densityGramsPerMl != null && <Text style={j.small}>Khối lượng riêng · {numberText(food.densityGramsPerMl)} g/mL{food.densitySourcePortionId ? ' · Mã phép đo ' + food.densitySourcePortionId : ''}</Text>}
-        {food.sourceUrl && <Pressable accessibilityRole="link" onPress={() => {
+        {!!food.sourceUrl && <Pressable accessibilityRole="link" onPress={() => {
           setLinkError(false); Linking.openURL(food.sourceUrl!).catch(() => setLinkError(true));
         }} style={j.linkRow}><Text style={j.link}>Mở nguồn gốc</Text></Pressable>}
         {linkError && <ErrorMessage message="Chưa mở được đường dẫn nguồn." />}

@@ -1,13 +1,13 @@
 import { router, useLocalSearchParams, usePreventRemove } from 'expo-router';
 import type { User } from 'firebase/auth';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import type { MealDraft, MealEditor, MealType, MealWarning, PortionItem } from '../../../../shared/food';
 import { AccountButton, accountStyles as ui, colors, ErrorMessage } from '@/components/account-ui';
 import { FoodError, FoodLink, LoadingFood, f, foodErrorMessage } from '@/components/food-ui';
 import { JournalBack, JournalDialog, JournalIcon, JournalPage, j } from '@/components/journal-ui';
 import { useSession } from '@/hooks/use-session';
-import { calculatePortion, getFood, getMealEditor, saveMeal } from '@/services/foods';
+import { calculatePortion, getFood, getMealEditor, saveMeal, searchFoods } from '@/services/foods';
 import { loadProfile } from '@/services/profile';
 import { AccountRequestError } from '@/services/session';
 import {
@@ -18,6 +18,7 @@ import { dayKey, displayDate, instant, normalizeTime, wallTime } from '@/utils/j
 
 type Preview = Awaited<ReturnType<typeof calculatePortion>>;
 type Estimate = { key: string; result?: Preview; error?: string; reloadEntry?: boolean };
+type FoodPage = Awaited<ReturnType<typeof searchFoods>>;
 const warningText: Record<MealWarning, string> = {
   HIGH_PORTION_MASS: 'Khối lượng thực phẩm vượt 5.000 g.',
   HIGH_PORTION_VOLUME: 'Thể tích thực phẩm vượt 5.000 mL.',
@@ -76,6 +77,47 @@ function EstimateCard({ state, input, invalid, warnings, retry }: {
     {notices.length > 0 && <Text style={j.strong} accessibilityRole="alert">
       {notices.map(w => warningText[w]).join(' ')} Hãy kiểm tra lại lượng đã nhập.</Text>}
   </View>;
+}
+
+function FoodPicker({ user, close, select }: { user: User; close: () => void; select: (food: Food) => void }) {
+  const [query, setQuery] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<{ key: string; page?: FoodPage; error?: string }>({ key: '' });
+  const key = query.trim();
+  useEffect(() => {
+    let active = true;
+    if (!key) return () => { active = false; };
+    const timer = setTimeout(() => {
+      searchFoods(user, key).then(page => { if (active) setState({ key, page }); })
+        .catch(error => { if (active) setState({ key, error: foodErrorMessage(error) }); });
+    }, 240);
+    return () => { active = false; clearTimeout(timer); };
+  }, [user, key, attempt]);
+  const result = state.key === key ? state : undefined;
+  return <JournalDialog title="Thêm thực phẩm" onClose={close}>
+    <Text style={ui.label}>Tìm theo tên hoặc tên gọi khác</Text>
+    <View style={ui.inputBox}>
+      <TextInput accessibilityLabel="Tìm thực phẩm để thêm vào bữa" value={query} onChangeText={setQuery}
+        placeholder="Ví dụ: cơm, đậu hũ" placeholderTextColor={colors.muted} autoCorrect={false}
+        maxLength={150} returnKeyType="search" style={ui.input} />
+    </View>
+    <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 360 }}>
+      {!key && <Text style={j.small}>Nhập tên thực phẩm để tra cứu trong danh mục.</Text>}
+      {!!key && !result && <ActivityIndicator color={colors.primary} accessibilityLabel="Đang tìm thực phẩm" />}
+      {!!result?.error && <FoodError message={result.error} retry={() => setAttempt(n => n + 1)} />}
+      {result?.page?.items.map(food => <Pressable key={food.foodId} accessibilityRole="button"
+        accessibilityLabel={'Thêm ' + food.foodName} onPress={() => select(food)} style={[j.card, { marginTop: 8, gap: 5 }]}>
+        <Text style={j.strong}>{food.foodName}</Text>
+        <Text style={j.small}>{food.foodState || 'Chưa rõ trạng thái'} · {food.energyKcal === null
+          ? 'Chưa có dữ liệu năng lượng' : nutrientText(food.energyKcal, 'kcal')} / {basisText(food)}</Text>
+        <Text style={j.small}>Nguồn: {food.foodSource}</Text>
+        <Text style={j.link}>Thêm món này</Text>
+      </Pressable>)}
+      {!!key && result?.page?.items.length === 0 && !result.error &&
+        <Text style={j.small}>Không tìm thấy thực phẩm phù hợp. Thử tên khác.</Text>}
+    </ScrollView>
+    <AccountButton outline label="Đóng" onPress={close} />
+  </JournalDialog>;
 }
 
 function MealMoment({ selected, time, date, zone, close, apply }: {
@@ -142,6 +184,21 @@ function PortionForm({ initialFood, user, date, zone, edit, reload }: {
   function editLine(values: Partial<LineField>) {
     setLines(before => before.map((row, i) => i === selected ? { ...row, ...values } : row));
   }
+  function addFood(food: Food) {
+    setLines(before => [...before, { food, unit: food.referenceUnit, text: '' }]);
+    setSelected(lines.length);
+    setPickerOpen(false);
+    setTouched(false);
+    setMessage('');
+  }
+  function removeSelected() {
+    if (lines.length < 2) return;
+    const next = lines.filter((_, i) => i !== selected);
+    setLines(next);
+    setSelected(Math.min(selected, next.length - 1));
+    setTouched(false);
+    setMessage('');
+  }
   const { items, errors, mealError, warnings } = useMemo(() => checkMealPortions(
     lines.map(row => ({ text: row.text, unit: row.unit, food: lineFood(row) }))
   ), [lines]);
@@ -155,7 +212,10 @@ function PortionForm({ initialFood, user, date, zone, edit, reload }: {
   const initialTime = wallTime(opened, zone).time;
   const [time, setTime] = useState(initialTime);
   const [entryId] = useState(() => edit?.entryId ?? 'meal-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
-  const dirty = edit ? mealType !== edit.mealType || time !== initialTime || lines.some(row => !originalAmount(row)) : !!value.trim();
+  const dirty = edit ? mealType !== edit.mealType || time !== initialTime || lines.length !== edit.lines.length ||
+    lines.some((row, i) => row.food.foodId !== edit.lines[i]?.food.foodId || !originalAmount(row))
+    : lines.length > 1 || lines.some(row => !!row.text.trim());
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [momentOpen, setMomentOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pending, setPending] = useState<MealDraft | null>(null);
@@ -245,6 +305,11 @@ function PortionForm({ initialFood, user, date, zone, edit, reload }: {
       </Pressable>
       <Text accessibilityRole="header" style={j.heading}>{edit ? 'Chỉnh sửa bữa ăn' : 'Khẩu phần bữa ăn'}</Text>
     </View>
+    <View style={[f.inline, { flexWrap: 'wrap', marginTop: 20 }]}>
+      <Pressable disabled={locked || lines.length >= 50} accessibilityRole="button" onPress={() => setPickerOpen(true)}
+        style={j.linkRow}><Text style={j.link}>+ Thêm thực phẩm</Text></Pressable>
+      {lines.length >= 50 && <Text style={j.small}>Tối đa 50 thực phẩm trong một bữa.</Text>}
+    </View>
     {lines.length > 1 && <View accessibilityRole="radiogroup" style={[f.inline, { flexWrap: 'wrap' }]}>
       {lines.map((row, i) => <Pressable key={i} disabled={locked} accessibilityRole="radio" aria-checked={selected === i}
         accessibilityState={{ checked: selected === i }} style={[f.chip, selected === i && f.selected]}
@@ -252,7 +317,10 @@ function PortionForm({ initialFood, user, date, zone, edit, reload }: {
     </View>}
     <View style={[j.card, f.block]}><Text style={j.section}>{food.foodName}</Text>
       <Text style={j.small}>{food.foodState || 'Chưa rõ trạng thái'} · {food.foodSource}</Text>
-      <Text style={j.small}>{food.energyKcal === null ? 'Chưa có dữ liệu năng lượng' : nutrientText(food.energyKcal, 'kcal')} / {basisText(food)}</Text></View>
+      <Text style={j.small}>{food.energyKcal === null ? 'Chưa có dữ liệu năng lượng' : nutrientText(food.energyKcal, 'kcal')} / {basisText(food)}</Text>
+      {lines.length > 1 && <Pressable disabled={locked} accessibilityRole="button" onPress={removeSelected} style={j.linkRow}>
+        <Text style={j.link}>Xóa món này khỏi bữa</Text></Pressable>}
+    </View>
     <View style={f.block}>
       {units.length > 1 && <View accessibilityRole="radiogroup" style={f.inline}>
         {units.map(option => <Pressable key={option} disabled={locked} accessibilityRole="radio" aria-checked={option === unit} accessibilityState={{ checked: option === unit }}
@@ -270,6 +338,7 @@ function PortionForm({ initialFood, user, date, zone, edit, reload }: {
       {unit === 'serving' && <Text style={j.small}>Một phần · {food.servingLabel || 'Phần theo nguồn'} · {numberText(food.servingSize!)} {food.servingUnit}</Text>}
     </View>
     <EstimateCard state={current} input={!!items} invalid={!!errorText} warnings={warnings} retry={current?.reloadEntry ? reload : retry} />
+    {pickerOpen && <FoodPicker user={user} close={() => setPickerOpen(false)} select={addFood} />}
     {momentOpen && <MealMoment selected={mealType} time={time} date={date} zone={zone} close={() => setMomentOpen(false)}
       apply={(type, clock) => { setMealType(type); setTime(clock); setMomentOpen(false); setMessage(''); }} />}
     {warning && <JournalDialog title="Kiểm tra lại khẩu phần" onClose={() => setWarning(null)}>

@@ -14,6 +14,8 @@ const images = {
   back: require('../../assets/images/journal/back.svg'), chevron: require('../../assets/images/journal/chevron.svg'),
   water: require('../../assets/images/journal/droplet.svg'), activity: require('../../assets/images/journal/footprints.svg'),
   sleep: require('../../assets/images/journal/moon-purple.svg'), moon: require('../../assets/images/journal/moon.svg'),
+  scale: require('../../assets/images/journal/scale.svg'), clock: require('../../assets/images/journal/clock.svg'),
+  check: require('../../assets/images/journal/circle-check.svg'),
 };
 export function JournalIcon({ name, size = 18, tint }: { name: keyof typeof images; size?: number; tint?: string }) {
   return <Image source={images[name]} style={{ width: size, height: size, tintColor: tint }} />;

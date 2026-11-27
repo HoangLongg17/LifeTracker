@@ -4,6 +4,7 @@ import express from 'express';
 import type { Auth } from 'firebase-admin/auth';
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { profileRouter } from '../src/routes/profile';
+import { weightsRouter } from '../src/routes/weights';
 
 test('bootstrap creates the group schema atomically and repairs only missing documents', async () => {
   const docs = new Map<string, Record<string, unknown>>();
@@ -16,12 +17,19 @@ test('bootstrap creates the group schema atomically and repairs only missing doc
   type MemoryQuery = {
     where: (field: string, operator: '==', value: unknown) => MemoryQuery;
     orderBy: (field: string, direction: 'asc' | 'desc') => MemoryQuery;
-    get: () => Promise<{ empty: boolean; docs: { id: string; get: (key: string) => unknown }[] }>;
-    limit: (count: number) => { get: () => Promise<{ empty: boolean; docs: { id: string; get: (key: string) => unknown }[] }> };
+    startAfter: (cursor: { id: string }) => MemoryQuery;
+    get: () => Promise<{ empty: boolean; docs: { id: string; get: (key: string) => unknown; data: () => Record<string, unknown> }[] }>;
+    limit: (count: number) => { get: () => Promise<{ empty: boolean; docs: { id: string; get: (key: string) => unknown; data: () => Record<string, unknown> }[] }> };
   };
-  const query = (path: string, orders: [string, 'asc' | 'desc'][] = [], filters: [string, unknown][] = []): MemoryQuery => ({
+  const query = (
+    path: string,
+    orders: [string, 'asc' | 'desc'][] = [],
+    filters: [string, unknown][] = [],
+    afterId?: string,
+  ): MemoryQuery => ({
     where: (field, _operator, expected) => query(path, orders, [...filters, [field, expected]]),
     orderBy: (field, direction) => query(path, [...orders, [field, direction]], filters),
+    startAfter: cursor => query(path, orders, filters, cursor.id),
     get: () => query(path, orders, filters).limit(Number.MAX_SAFE_INTEGER).get(),
     limit: count => ({
       get: async () => {
@@ -50,9 +58,11 @@ test('bootstrap creates the group schema atomically and repairs only missing doc
           }
           return 0;
         });
-        const selected = docsInCollection.slice(0, count).map(({ id, data }) => ({
+        const cursorIndex = afterId ? docsInCollection.findIndex(item => item.id === afterId) : -1;
+        const selected = docsInCollection.slice(cursorIndex + 1, cursorIndex + 1 + count).map(({ id, data }) => ({
           id,
           get: (key: string) => data[key],
+          data: () => data,
         }));
         return { empty: selected.length === 0, docs: selected };
       },
@@ -66,8 +76,10 @@ test('bootstrap creates the group schema atomically and repairs only missing doc
   const ref = (path: string): { path: string; collection: (name: string) => ReturnType<typeof collection> } => ({
     path,
     collection: (name: string) => collection(`${path}/${name}`),
+    get: async () => snapshot({ path }),
   });
   const snapshot = (r: { path: string }) => ({
+    id: r.path.split('/').pop(),
     exists: docs.has(r.path),
     get: (key: string) => docs.get(r.path)?.[key],
     data: () => docs.get(r.path),
@@ -80,11 +92,13 @@ test('bootstrap creates the group schema atomically and repairs only missing doc
     collection,
     runTransaction: async (fn: (tx: unknown) => unknown) => {
       if (unavailable) throw new Error('offline');
-      const pending = new Map<string, Record<string, unknown>>();
+      const pending = new Map<string, Record<string, unknown> | null>();
       const result = await fn({
-        get: async (r: { path: string }) => {
+        get: async (r: { path?: string; get?: () => Promise<unknown> }) => {
           assert.equal(pending.size, 0, 'All reads must precede writes');
-          return snapshot(r);
+          if (r.path) return snapshot({ path: r.path });
+          if (r.get) return r.get();
+          throw new Error('Unsupported transaction read');
         },
         create: (r: { path: string }, value: Record<string, unknown>) => {
           assert.ok(!docs.has(r.path), 'Existing data must not be overwritten');
@@ -93,9 +107,16 @@ test('bootstrap creates the group schema atomically and repairs only missing doc
         update: (r: { path: string }, value: Record<string, unknown>) => {
           pending.set(r.path, { ...docs.get(r.path), ...value });
         },
+        delete: (r: { path: string }) => {
+          pending.set(r.path, null);
+        },
       });
       if (failCommit) throw new Error('commit failed');
-      for (const [path, value] of pending) { docs.set(path, value); writes++; }
+      for (const [path, value] of pending) {
+        if (value) docs.set(path, value);
+        else docs.delete(path);
+        writes++;
+      }
       return result;
     },
   } as unknown as Firestore;
@@ -109,6 +130,7 @@ test('bootstrap creates the group schema atomically and repairs only missing doc
   const app = express();
   app.use(express.json());
   app.use(profileRouter(auth, db));
+  app.use(weightsRouter(auth, db));
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address() as { port: number };
@@ -161,7 +183,7 @@ test('bootstrap creates the group schema atomically and repairs only missing doc
     assert.equal(user.dataRevision, 0);
     assert.equal(user.version, 1);
     assert.equal(user.createdAt, user.updatedAt);
-    assert.deepEqual(Object.keys(profile).sort(), ['birthYear', 'displayName', 'heightCm', 'notificationSettings', 'preferredUnits', 'timeZone', 'updatedAt', 'version']);
+    assert.deepEqual(Object.keys(profile).sort(), ['birthYear', 'currentWeightKg', 'displayName', 'heightCm', 'notificationSettings', 'preferredUnits', 'timeZone', 'updatedAt', 'version']);
     assert.equal(profile.birthYear, null);
     assert.equal(profile.heightCm, null);
     assert.equal(profile.displayName, '');
@@ -252,12 +274,21 @@ test('bootstrap creates the group schema atomically and repairs only missing doc
     };
     assert.equal((await weightApi('valid', { ...newWeight, weightKg: 0 })).status, 400);
     assert.equal((await weightApi('valid', { ...newWeight, weightKg: 310 })).status, 400);
+    assert.equal((await weightApi('valid', { ...newWeight, entryId: 'hard-limit', weightKg: 1000, warningConfirmed: true })).status, 400);
     assert.equal((await weightApi('valid', { ...newWeight, entryId: 'future-weight', measuredAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() })).status, 400);
     assert.equal((await weightApi('valid', newWeight)).status, 201);
     assert.equal((await weightApi('valid', newWeight)).status, 200);
+    docs.get(profilePath)!.currentWeightKg = null;
+    assert.equal((await weightApi('valid', newWeight)).status, 200);
+    assert.equal(docs.get(profilePath)?.currentWeightKg, 70);
     assert.equal((await weightApi('other', { ...newWeight, entryId: 'private-weight' })).status, 201);
     assert.equal(docs.get('users/owner-456/weightLogs/private-weight')?.userId, 'owner-456');
     assert.equal((await weightApi('valid', { ...newWeight, entryId: 'older-weight', weightKg: 68, measuredAt: '2024-06-01T10:00:00.000Z' })).status, 201);
+    docs.set('users/owner-123/weightLogs/legacy-weight', {
+      weightKg: 66,
+      measuredAt: Timestamp.fromDate(new Date('2021-01-01T10:00:00.000Z')),
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
     docs.set('users/owner-123/weightLogs/unreviewed-weight', {
       entryId: 'unreviewed-weight',
       weightKg: 99,
@@ -267,6 +298,148 @@ test('bootstrap creates the group schema atomically and repairs only missing doc
     });
     const withWeight = await profileApi('valid');
     assert.equal((await withWeight.json()).currentWeightKg, 70);
+
+    const addedNewer = await weightApi('valid', {
+      entryId: 'newer-weight',
+      weightKg: 72,
+      measuredAt: '2025-07-01T10:00:00.000Z',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
+    assert.equal(addedNewer.status, 201);
+    assert.equal(docs.get(profilePath)?.currentWeightKg, 72);
+    const addedOlder = await weightApi('valid', {
+      entryId: 'backfilled-weight',
+      weightKg: 65,
+      measuredAt: '2023-07-01T10:00:00.000Z',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
+    assert.equal(addedOlder.status, 201);
+    assert.equal(docs.get(profilePath)?.currentWeightKg, 72);
+
+    const historyPage = await fetch(`http://127.0.0.1:${address.port}/me/weights?limit=1`, {
+      headers: { Authorization: 'Bearer valid' },
+    });
+    assert.equal(historyPage.status, 200);
+    const pageBody = await historyPage.json();
+    assert.equal(pageBody.items[0].entryId, 'newer-weight');
+    assert.equal(pageBody.nextCursor, 'newer-weight');
+    const legacyHistory = await fetch(`http://127.0.0.1:${address.port}/me/weights?date=2021-01-01`, {
+      headers: { Authorization: 'Bearer valid' },
+    });
+    assert.equal(legacyHistory.status, 200);
+    const legacyItem = (await legacyHistory.json()).items[0];
+    assert.equal(legacyItem.entryId, 'legacy-weight');
+    assert.equal(legacyItem.version, 1);
+    assert.equal(legacyItem.localDate, '2021-01-01');
+    const nextPage = await fetch(`http://127.0.0.1:${address.port}/me/weights?limit=1&cursor=newer-weight`, {
+      headers: { Authorization: 'Bearer valid' },
+    });
+    assert.equal(nextPage.status, 200);
+    assert.equal((await nextPage.json()).items[0].entryId, 'latest-weight');
+    const weightsOnDay = await fetch(`http://127.0.0.1:${address.port}/me/weights?date=2025-07-01&limit=1`, {
+      headers: { Authorization: 'Bearer valid' },
+    });
+    assert.equal(weightsOnDay.status, 200);
+    const dayBody = await weightsOnDay.json();
+    assert.deepEqual(dayBody.items.map((item: { entryId: string }) => item.entryId), ['newer-weight']);
+    assert.equal(dayBody.nextCursor, null);
+    const invalidWeightDate = await fetch(`http://127.0.0.1:${address.port}/me/weights?date=2025-02-30`, {
+      headers: { Authorization: 'Bearer valid' },
+    });
+    assert.equal(invalidWeightDate.status, 400);
+    const cursorFromDifferentDay = await fetch(`http://127.0.0.1:${address.port}/me/weights?date=2025-07-01&cursor=latest-weight`, {
+      headers: { Authorization: 'Bearer valid' },
+    });
+    assert.equal(cursorFromDifferentDay.status, 400);
+    const ownWeight = await fetch(`http://127.0.0.1:${address.port}/me/weights/newer-weight`, {
+      headers: { Authorization: 'Bearer valid' },
+    });
+    assert.equal(ownWeight.status, 200);
+
+    const changedLatest = await fetch(`http://127.0.0.1:${address.port}/me/weights/newer-weight`, {
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer valid', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: 1, weightKg: 73 }),
+    });
+    assert.equal(changedLatest.status, 200);
+    assert.equal(docs.get(profilePath)?.currentWeightKg, 73);
+    const movedOlder = await fetch(`http://127.0.0.1:${address.port}/me/weights/newer-weight`, {
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer valid', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: 2, measuredAt: '2022-07-01T10:00:00.000Z' }),
+    });
+    assert.equal(movedOlder.status, 200);
+    assert.equal((await movedOlder.json()).version, 3);
+    assert.equal(docs.get(profilePath)?.currentWeightKg, 70);
+    const staleUpdate = await fetch(`http://127.0.0.1:${address.port}/me/weights/newer-weight`, {
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer valid', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: 1, weightKg: 80 }),
+    });
+    assert.equal(staleUpdate.status, 409);
+
+    const deletedLatest = await fetch(`http://127.0.0.1:${address.port}/me/weights/latest-weight?version=1`, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer valid' },
+    });
+    assert.equal(deletedLatest.status, 204);
+    assert.equal(docs.get(profilePath)?.currentWeightKg, 68);
+    const deletedFinal = await fetch(`http://127.0.0.1:${address.port}/me/weights/older-weight?version=1`, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer valid' },
+    });
+    assert.equal(deletedFinal.status, 204);
+    assert.equal(docs.get(profilePath)?.currentWeightKg, 65);
+    const deletedBackfill = await fetch(`http://127.0.0.1:${address.port}/me/weights/backfilled-weight?version=1`, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer valid' },
+    });
+    assert.equal(deletedBackfill.status, 204);
+    assert.equal(docs.get(profilePath)?.currentWeightKg, 73);
+    const deletedMovedRecord = await fetch(`http://127.0.0.1:${address.port}/me/weights/newer-weight?version=3`, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer valid' },
+    });
+    assert.equal(deletedMovedRecord.status, 204);
+    assert.equal(docs.get(profilePath)?.currentWeightKg, 66);
+    const deletedLegacyRecord = await fetch(`http://127.0.0.1:${address.port}/me/weights/legacy-weight?version=1`, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer valid' },
+    });
+    assert.equal(deletedLegacyRecord.status, 204);
+    assert.equal(docs.get(profilePath)?.currentWeightKg, null);
+
+    const minuteBase = await weightApi('valid', {
+      entryId: 'minute-base',
+      weightKg: 67,
+      measuredAt: '2025-08-03T11:08:45.000Z',
+      timeZone: 'UTC',
+    });
+    assert.equal(minuteBase.status, 201);
+    docs.get('users/owner-123/weightLogs/minute-base')!.updatedAt =
+      Timestamp.fromDate(new Date('2025-01-01T00:00:00.000Z'));
+    const sameMinuteNewer = await weightApi('valid', {
+      entryId: 'same-minute-newer',
+      weightKg: 68,
+      measuredAt: '2025-08-03T11:08:00.000Z',
+      timeZone: 'UTC',
+    });
+    assert.equal(sameMinuteNewer.status, 201);
+    assert.equal(docs.get(profilePath)?.currentWeightKg, 68);
+    assert.equal((await (await profileApi('valid')).json()).currentWeightKg, 68);
+    const deleteSameMinuteNewer = await fetch(`http://127.0.0.1:${address.port}/me/weights/same-minute-newer?version=1`, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer valid' },
+    });
+    assert.equal(deleteSameMinuteNewer.status, 204);
+    assert.equal(docs.get(profilePath)?.currentWeightKg, 67);
+    const deleteMinuteBase = await fetch(`http://127.0.0.1:${address.port}/me/weights/minute-base?version=1`, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer valid' },
+    });
+    assert.equal(deleteMinuteBase.status, 204);
+    assert.equal(docs.get(profilePath)?.currentWeightKg, null);
+
     assert.equal((await me('other')).status, 200);
     docs.get(profilePath)!.displayName = 'Minh';
     assert.equal((await (await me('valid')).json()).displayName, 'Minh');
@@ -280,7 +453,7 @@ test('bootstrap creates the group schema atomically and repairs only missing doc
       assert.equal((await profileApi('valid', 'PATCH', { version: 3, displayName: 'Huy' })).status, 403);
       assert.equal((await weightApi('valid', { ...newWeight, entryId: `blocked-${status}` })).status, 403);
     }
-    assert.equal(writes, 10);
+    assert.equal(writes, 40);
     unavailable = true;
     assert.equal((await me('valid')).status, 503);
   } finally {

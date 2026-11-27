@@ -1,3 +1,4 @@
+import { daysRouter } from './routes/days';
 import { foodsRouter } from './routes/foods';
 import { waterReadRouter } from './routes/waterRead';
 import { logsRouter } from './routes/logs';
@@ -34,7 +35,7 @@ app.use(weightsRouter(getAuth(), db));
 app.use(foodsRouter(getAuth(), db));
 app.use(logsRouter(getAuth(), db));
 app.use(waterReadRouter(getAuth(), db));
-
+app.use(daysRouter(getAuth(), db));
 // Kiểm tra trạng thái Backend
 app.get("/health", (_req, res) => {
   res.status(200).json({

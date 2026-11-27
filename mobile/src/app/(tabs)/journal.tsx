@@ -6,6 +6,13 @@ import { AccountButton, accountStyles, colors, ErrorMessage } from '@/components
 import { j, JournalDialog, JournalHeader, JournalIcon, JournalPage } from '@/components/journal-ui';
 import { useSession } from '@/hooks/use-session';
 import type { MealJournalEntry } from '../../../../shared/food';
+import {
+  getDayRecordStatus,
+  updateCategoryRecordStatus,
+  type CategoryRecordState,
+  type DayRecordStatusResponse,
+  type RecordCategory,
+} from '@/services/day-status';
 import { deleteMeal, getMealDay } from '@/services/foods';
 import { dailyMealEnergyText, mealLabels, savedAmountText, savedNutrientText, wrapJournalNumbers } from '@/utils/food';
 import { loadProfile } from '@/services/profile';
@@ -15,8 +22,39 @@ import { deleteWeight, formatWeight, getWeightHistory, type WeightEntry } from '
 import { dayKey, displayDate, durationText, shiftDay, wallTime } from '@/utils/journal-time';
 
 type Row = ({ kind: 'meal'; meal: MealJournalEntry } | { kind: 'weight'; weight: WeightEntry } | { kind: Kind | 'water' }) & { id: string; version: number; title: string; detail: string; stamp: string; zone: string; overlap?: string };
-type Data = { date: string; today: string; water: WaterDayResponse; mealReadFailed: boolean; weightReadFailed: boolean; energy: string; rows: Row[]; activity: number | null; sleep: number | null };
+type Data = {
+  date: string;
+  today: string;
+  water: WaterDayResponse;
+  dayStatus: DayRecordStatusResponse;
+  mealReadFailed: boolean;
+  weightReadFailed: boolean;
+  energy: string;
+  rows: Row[];
+  activity: number | null;
+  sleep: number | null;
+};
 type Params = { date?: string; notice?: string; savedTime?: string; savedAmount?: string; edited?: string };
+
+const CATEGORY_META: Array<{ key: RecordCategory; label: string; emptyAction: string }> = [
+  { key: 'water', label: 'Nước uống', emptyAction: 'Xác nhận không uống' },
+  { key: 'meal', label: 'Ăn uống', emptyAction: 'Xác nhận không ăn' },
+  { key: 'activity', label: 'Vận động', emptyAction: 'Xác nhận không vận động' },
+  { key: 'sleep', label: 'Giấc ngủ', emptyAction: 'Xác nhận không ngủ' },
+];
+
+function formatCategoryValue(cat: CategoryRecordState): string {
+  if (cat.status === 'missing' || cat.total === null) return 'Thiếu dữ liệu';
+  if (cat.category === 'water') return `${cat.total.toLocaleString('vi-VN')} mL`;
+  if (cat.category === 'meal') return `${Math.round(cat.total).toLocaleString('vi-VN')} kcal`;
+  return durationText(cat.total);
+}
+
+function statusLabel(status: CategoryRecordState['status']): string {
+  if (status === 'confirmed') return 'Đã xác nhận';
+  if (status === 'partial') return 'Chưa xác nhận đủ';
+  return 'Thiếu dữ liệu';
+}
 
 function Journal({ user }: { user: User }) {
   const params = useLocalSearchParams<Params>();
@@ -30,18 +68,23 @@ function Journal({ user }: { user: User }) {
   const [dateInput, setDateInput] = useState('');
   const [actionError, setActionError] = useState('');
   const [removing, setRemoving] = useState(false);
+  const [confirmingCategory, setConfirmingCategory] = useState<RecordCategory | null>(null);
+  const [statusError, setStatusError] = useState('');
   const deleting = useRef(false);
 
   useFocusEffect(useCallback(() => {
     let active = true;
     latestRead.current = revision;
-    setError(''); setData(null);
+    setError(''); setData(null); setStatusError('');
     async function refresh() {
       const profile = await loadProfile(user);
       const today = dayKey(wallTime(Date.now(), profile.timeZone).date)!;
       const date = requested ?? today;
-      const [water, activity, sleep, meals, weightPage] = await Promise.all([
-        getWaterDay(date, user), getTimedDay(user, 'activity', date), getTimedDay(user, 'sleep', date),
+      const [water, dayStatus, activity, sleep, meals, weightPage] = await Promise.all([
+        getWaterDay(date, user),
+        getDayRecordStatus(user, date),
+        getTimedDay(user, 'activity', date),
+        getTimedDay(user, 'sleep', date),
         getMealDay(user, date).catch(() => null),
         getWeightHistory(user, { date, limit: 100 }).catch(() => null),
       ]);
@@ -72,7 +115,7 @@ function Journal({ user }: { user: User }) {
       ];
       rows.sort((a, b) => Date.parse(b.stamp) - Date.parse(a.stamp) || a.id.localeCompare(b.id));
       if (active && latestRead.current === revision) setData({
-        date, today, water, rows, mealReadFailed: meals === null, weightReadFailed: weightPage === null,
+        date, today, water, dayStatus, rows, mealReadFailed: meals === null, weightReadFailed: weightPage === null,
         energy: dailyMealEnergyText(meals), activity: activity.totalMinutes, sleep: sleep.totalMinutes,
       });
     }
@@ -109,6 +152,27 @@ function Journal({ user }: { user: User }) {
     } catch (cause) { setActionError(journalError(cause)); }
     finally { deleting.current = false; setRemoving(false); }
   }
+  async function confirmCategory(category: RecordCategory) {
+    if (!data || confirmingCategory) return;
+    setConfirmingCategory(category);
+    setStatusError('');
+    try {
+      const updated = await updateCategoryRecordStatus(user, data.date, category, true);
+      setData(prev => prev ? {
+        ...prev,
+        dayStatus: updated,
+        water: category === 'water' ? {
+          ...prev.water,
+          recordStatus: updated.categories.water.status,
+          totalWaterMl: updated.categories.water.total,
+        } : prev.water,
+      } : prev);
+    } catch (cause) {
+      setStatusError(journalError(cause));
+    } finally {
+      setConfirmingCategory(null);
+    }
+  }
   const add = () => router.push({ pathname: '/journal-add', params: date ? { date } : {} });
   const dayTitle = date && new Intl.DateTimeFormat('vi-VN', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }).format(new Date(date + 'T12:00:00Z'));
   return <JournalPage tab><JournalHeader />
@@ -123,20 +187,92 @@ function Journal({ user }: { user: User }) {
           <View style={{ transform: [{ rotate: delta < 0 ? '180deg' : '0deg' }] }}><JournalIcon name="chevron" size={15} /></View></Pressable>)}
       </View>}
     </View>
-    <Text accessibilityRole="header" style={[j.heading, { fontSize: 32, lineHeight: 44, marginTop: 0 }]}>Nhật ký</Text>
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+      <Text accessibilityRole="header" style={[j.heading, { fontSize: 32, lineHeight: 44, marginTop: 0 }]}>Nhật ký</Text>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => router.push('/journal-history')}
+        style={{ backgroundColor: colors.pale, borderRadius: 10, paddingVertical: 7, paddingHorizontal: 12 }}
+      >
+        <Text style={j.link}>Lịch sử</Text>
+      </Pressable>
+    </View>
     {!!error && <View style={{ gap: 12, marginTop: 18 }}><ErrorMessage message={error} /><AccountButton outline label="Thử lại" onPress={refresh} /></View>}
     {!data && !error && <ActivityIndicator style={{ marginTop: 24 }} color={colors.primary} accessibilityLabel="Đang tải nhật ký" />}
     {data && <>
       {notice ? <View style={[j.card, { marginTop: 10, backgroundColor: colors.pale }]}><Text accessibilityLiveRegion="polite" style={j.strong}>{notice}</Text></View> :
       <View style={[j.card, { marginTop: 10, minHeight: 125, justifyContent: 'space-between' }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><JournalIcon name="water" size={17} /><Text style={j.strong}>Nước đã ghi {date === data.today ? 'hôm nay' : 'trong ngày'}</Text></View>
-        <Text style={[j.heading, { marginTop: 2, fontSize: 24 }]}>{data.water.totalWaterMl === null ? 'Chưa có dữ liệu' : data.water.totalWaterMl.toLocaleString('vi-VN') + ' mL'}</Text>
+        <Text style={[j.heading, { marginTop: 2, fontSize: 24 }]}>{data.dayStatus.categories.water.total === null ? 'Chưa có dữ liệu' : data.dayStatus.categories.water.total.toLocaleString('vi-VN') + ' mL'}</Text>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text style={j.small}>{data.water.recordStatus === 'confirmed' ? 'Đã xác nhận' : data.water.recordStatus === 'partial' ? 'Đã ghi một phần' : 'Chưa ghi nước'}</Text>
+          <Text style={j.small}>{statusLabel(data.dayStatus.categories.water.status)}</Text>
           <Pressable accessibilityRole="button" hitSlop={6} onPress={() => router.push({ pathname: '/water/new', params: { date: data.date } })}
             style={{ backgroundColor: colors.pale, borderRadius: 10, paddingVertical: 6, paddingHorizontal: 12 }}><Text style={j.link}>+ Ghi nước</Text></Pressable>
         </View>
       </View>}
+
+      {/* XÁC NHẬN ĐẦY ĐỦ DỮ LIỆU THEO TỪNG NHÓM (FR-02.07, FR-02.08) */}
+      <View style={[j.card, { marginTop: 14, gap: 10 }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={j.section}>Mức độ đầy đủ trong ngày</Text>
+          <Text style={j.small}>
+            {Object.values(data.dayStatus.categories).filter(c => c.status === 'confirmed').length}/4 đã xác nhận
+          </Text>
+        </View>
+        {!data.dayStatus.canConfirm && (
+          <Text style={j.small}>
+            Ngày chưa kết thúc theo múi giờ của ngày này. Bạn có thể xác nhận đầy đủ từ ngày mai.
+          </Text>
+        )}
+        {CATEGORY_META.map((meta, idx) => {
+          const cat = data.dayStatus.categories[meta.key];
+          const isBusy = confirmingCategory === meta.key;
+          return (
+            <View
+              key={meta.key}
+              style={[
+                { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: idx > 0 ? 10 : 2, gap: 10 },
+                idx > 0 && j.hairline,
+              ]}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={j.strong}>{meta.label}</Text>
+                <Text style={j.small}>
+                  {formatCategoryValue(cat)} · {statusLabel(cat.status)}
+                </Text>
+              </View>
+              {cat.status === 'confirmed' ? (
+                <View style={{ backgroundColor: colors.pale, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
+                  <Text style={[j.small, { color: colors.primary, fontFamily: 'Roboto_700Bold' }]}>Đã xác nhận</Text>
+                </View>
+              ) : data.dayStatus.canConfirm ? (
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={!!confirmingCategory}
+                  onPress={() => void confirmCategory(meta.key)}
+                  style={{
+                    backgroundColor: colors.primary,
+                    borderRadius: 10,
+                    paddingHorizontal: 11,
+                    paddingVertical: 7,
+                    opacity: confirmingCategory && !isBusy ? 0.5 : 1,
+                  }}
+                >
+                  <Text style={{ color: '#FFFFFF', fontFamily: 'Roboto_700Bold', fontSize: 12 }}>
+                    {isBusy ? 'Đang lưu...' : cat.count === 0 ? meta.emptyAction : 'Xác nhận đủ'}
+                  </Text>
+                </Pressable>
+              ) : (
+                <View style={{ backgroundColor: '#EFECE6', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
+                  <Text style={j.small}>{cat.status === 'partial' ? 'Chưa xác nhận' : 'Thiếu dữ liệu'}</Text>
+                </View>
+              )}
+            </View>
+          );
+        })}
+        {!!statusError && <ErrorMessage message={statusError} />}
+      </View>
+
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 18, minHeight: 42 }}>
         <Text style={j.section}>Các bản ghi</Text>
         {!notice && <Pressable accessibilityRole="button" style={j.linkRow} onPress={add}><Text style={j.link}>+ Thêm bản ghi</Text></Pressable>}

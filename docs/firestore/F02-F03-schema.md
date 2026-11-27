@@ -449,20 +449,21 @@ Các trường con cụ thể phải được nhóm thống nhất khi triển k
 1. Backend xác minh Firebase ID Token và lấy UID người dùng.
 2. Mỗi lần đo phải có weightKg và measuredAt hợp lệ.
 3. Từ chối weightKg <= 0, NaN hoặc Infinity.
-4. Với weightKg ngoài khoảng 20–300 kg, hệ thống cần cảnh báo và yêu cầu xác nhận theo quy tắc thiết kế; không tự động coi mọi giá trị này là không hợp lệ.
-5. localDate được tính từ measuredAt theo timeZone tại thời điểm đo.
-6. Không sử dụng createdAt để xác định lần đo cân nặng mới nhất.
-7. Người dùng có thể ghi bổ sung số đo của ngày trước đó.
-8. Khi ghi bổ sung số đo cũ, không được ghi đè cân nặng hiện tại nếu đã có số đo hợp lệ mới hơn.
-9. Khi thêm, sửa hoặc xóa số đo mới nhất, Backend phải xác định lại số đo hợp lệ có measuredAt mới nhất.
-10. Cập nhật profiles/main.currentWeightKg từ lịch sử weightLogs, không coi đây là nguồn dữ liệu độc lập.
-11. Nếu không còn số đo hợp lệ, currentWeightKg phải thể hiện trạng thái chưa có dữ liệu, không tự gán 0.
-12. Gửi lại cùng entryId và cùng nội dung không tạo bản ghi trùng.
-13. Dùng lại entryId với nội dung khác trả HTTP 409.
-14. Sửa hoặc xóa bằng version cũ trả HTTP 409.
-15. Người dùng chỉ được đọc, sửa và xóa dữ liệu thuộc UID của chính mình.
-16. Khi số đo thay đổi ngày quy thuộc, Backend phải cập nhật hoặc đánh dấu tính lại các dữ liệu dẫn xuất liên quan.
-17. Việc cập nhật lịch sử và cân nặng hiện tại phải bảo đảm nhất quán khi có các request đồng thời.
+4. Với weightKg ngoài khoảng 20–300 kg và dưới 1000 kg, hệ thống cần cảnh báo và yêu cầu xác nhận theo quy tắc thiết kế.
+5. weightKg đạt 1000 kg trở lên bị từ chối như một giới hạn cứng, dù có truyền `warningConfirmed` hay không.
+6. localDate được tính từ measuredAt theo timeZone tại thời điểm đo.
+7. Không sử dụng createdAt để xác định lần đo cân nặng mới nhất.
+8. Người dùng có thể ghi bổ sung số đo của ngày trước đó.
+9. Khi ghi bổ sung số đo cũ, không được ghi đè cân nặng hiện tại nếu đã có số đo hợp lệ mới hơn.
+10. Khi thêm, sửa hoặc xóa số đo mới nhất, Backend phải xác định lại số đo hợp lệ có measuredAt mới nhất.
+11. Cập nhật profiles/main.currentWeightKg từ lịch sử weightLogs, không coi đây là nguồn dữ liệu độc lập.
+12. Nếu không còn số đo hợp lệ, currentWeightKg phải thể hiện trạng thái chưa có dữ liệu, không tự gán 0.
+13. Gửi lại cùng entryId và cùng nội dung không tạo bản ghi trùng.
+14. Dùng lại entryId với nội dung khác trả HTTP 409.
+15. Sửa hoặc xóa bằng version cũ trả HTTP 409.
+16. Người dùng chỉ được đọc, sửa và xóa dữ liệu thuộc UID của chính mình.
+17. Khi số đo thay đổi ngày quy thuộc, Backend phải cập nhật hoặc đánh dấu tính lại các dữ liệu dẫn xuất liên quan.
+18. Việc cập nhật lịch sử và cân nặng hiện tại phải bảo đảm nhất quán khi có các request đồng thời.
 
 #### Liên kết với hồ sơ F01
 

@@ -180,10 +180,12 @@ export default function PersonalProfileScreen() {
       && Math.abs(heightCm * (draft.units.height === 'in' ? 2.54 : 1) - (profile?.heightCm ?? 0)) > heightEpsilonCm;
     const weightChanged = weightKg !== null && Number.isFinite(weightKg)
       && Math.abs(weightKg - (profile?.currentWeightKg ?? 0)) > weightEpsilonKg;
+    const weightHardLimitExceeded = weightChanged && weightKg! >= 1000;
     const heightOutOfRange = heightChanged
       && (heightCm! * (draft.units.height === 'in' ? 2.54 : 1) < 50
         || heightCm! * (draft.units.height === 'in' ? 2.54 : 1) > 250);
-    const weightOutOfRange = weightChanged && weightKg! > 0 && (weightKg! < 20 || weightKg! > 300);
+    const weightOutOfRange = weightChanged && weightKg! > 0 && !weightHardLimitExceeded
+      && (weightKg! < 20 || weightKg! > 300);
     return heightOutOfRange || weightOutOfRange;
   }, [draft, profile]);
 
@@ -226,6 +228,9 @@ export default function PersonalProfileScreen() {
     const weight = numericValue(draft.weight);
     const weightKg = weight === null ? null : weight / (draft.units.weight === 'lb' ? 2.2046226218 : 1);
     if (weight !== null && (!Number.isFinite(weightKg) || weightKg! <= 0)) nextErrors.weight = 'Cân nặng phải là số lớn hơn 0.';
+    if (weightKg !== null && Number.isFinite(weightKg) && weightKg >= 1000) {
+      nextErrors.weight = 'Cân nặng không được đạt 1000 kg trở lên.';
+    }
     try {
       new Intl.DateTimeFormat('en-US', { timeZone: draft.timeZone }).format();
     } catch {

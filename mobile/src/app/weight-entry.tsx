@@ -20,7 +20,11 @@ function entryId() {
 }
 
 function numberText(value: number) {
-  return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(value);
+  return value
+    .toFixed(2)
+    .replace(/(\.\d*?)0+$/, '$1')
+    .replace(/\.$/, '')
+    .replace('.', ',');
 }
 
 function requestMessage(error: unknown) {
@@ -95,20 +99,26 @@ function WeightForm({ user, date, editId, returnTo }: {
     : Number.NaN;
   const validWeight = Number.isFinite(parsedValue) && parsedValue > 0;
   const weightKg = validWeight ? weightToKg(parsedValue, unit) : null;
+  const hardLimitExceeded = weightKg !== null && weightKg >= 1000;
   const weightError = weightTouched || saveAttempted
     ? !weightText.trim() || parsedValue === 0
       ? `Nhập cân nặng lớn hơn 0 ${unit}.`
+      : hardLimitExceeded ? 'Cân nặng không được đạt 1000 kg trở lên.'
       : !validWeight ? `Nhập cân nặng hợp lệ bằng ${unit}.` : ''
     : '';
   const measuredAt = profile ? instant({ date: dateText, time: timeText }, timeZone, record?.measuredAt) : null;
   const timeLabel = `${dateText} · ${timeText}`;
   const weightLabel = weightKg !== null ? formatWeight(weightKg, unit) : 'Chờ cân nặng hợp lệ.';
-  const warningRequired = weightKg !== null && (weightKg < 20 || weightKg > 300);
-  const canSave = !!profile && validWeight && !saving;
+  const warningRequired = weightKg !== null && !hardLimitExceeded && (weightKg < 20 || weightKg > 300);
+  const canSave = !!profile && validWeight && !hardLimitExceeded && !saving;
 
   async function save(confirmWarning = false) {
     if (!profile || !weightKg || savingRef.current) return;
     setSaveAttempted(true);
+    if (hardLimitExceeded) {
+      setError('Cân nặng không được đạt 1000 kg trở lên.');
+      return;
+    }
     if (!measuredAt || Date.parse(measuredAt) > Date.now() + 5 * 60 * 1000) {
       setTimeError('Nhập ngày và giờ đo hợp lệ, không ở tương lai.');
       setTimeOpen(true);

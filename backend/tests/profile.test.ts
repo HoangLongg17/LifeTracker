@@ -274,6 +274,7 @@ test('bootstrap creates the group schema atomically and repairs only missing doc
     };
     assert.equal((await weightApi('valid', { ...newWeight, weightKg: 0 })).status, 400);
     assert.equal((await weightApi('valid', { ...newWeight, weightKg: 310 })).status, 400);
+    assert.equal((await weightApi('valid', { ...newWeight, entryId: 'hard-limit', weightKg: 1000, warningConfirmed: true })).status, 400);
     assert.equal((await weightApi('valid', { ...newWeight, entryId: 'future-weight', measuredAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() })).status, 400);
     assert.equal((await weightApi('valid', newWeight)).status, 201);
     assert.equal((await weightApi('valid', newWeight)).status, 200);

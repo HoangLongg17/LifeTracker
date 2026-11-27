@@ -86,7 +86,8 @@ function validateInput(input: unknown, mode: 'create' | 'update') {
     errors.version = 'INVALID_VERSION';
   }
   if (mode === 'create' || 'weightKg' in input) {
-    if (typeof input.weightKg !== 'number' || !Number.isFinite(input.weightKg) || input.weightKg <= 0) {
+    if (typeof input.weightKg !== 'number' || !Number.isFinite(input.weightKg)
+        || input.weightKg <= 0 || input.weightKg >= 1000) {
       errors.weightKg = 'INVALID_WEIGHT';
     } else if ((input.weightKg < 20 || input.weightKg > 300)
         && input.warningConfirmed !== true) {
@@ -358,7 +359,11 @@ export function weightsRouter(auth: Pick<Auth, 'verifyIdToken'>, db: Firestore) 
         if (currentVersion !== expectedVersion) return { status: 'VERSION_CONFLICT' };
         const weightKg = input.weightKg ?? current.weightKg;
         const warningConfirmed = input.warningConfirmed ?? current.warningConfirmed === true;
-        if ((typeof weightKg !== 'number' || weightKg < 20 || weightKg > 300) && !warningConfirmed) {
+        if (typeof weightKg !== 'number' || !Number.isFinite(weightKg)
+            || weightKg <= 0 || weightKg >= 1000) {
+          return { status: 'VALIDATION_ERROR', fields: { weightKg: 'INVALID_WEIGHT' } };
+        }
+        if ((weightKg < 20 || weightKg > 300) && !warningConfirmed) {
           return { status: 'VALIDATION_ERROR', fields: { weightKg: 'WARNING_CONFIRMATION_REQUIRED' } };
         }
         const measuredAt = input.measuredAt ?? (current.measuredAt as Timestamp).toDate();

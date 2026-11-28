@@ -75,16 +75,21 @@ async function mealSources(db: Firestore, tx: Transaction, items: PortionItem[],
     return input.quantity === item.quantity && input.consumedGrams === item.consumedGrams &&
       input.consumedMl === item.consumedMl;
   };
+  const match = (itemIndex: number, previousIndex: number) => {
+    matched.add(previousIndex);
+    previousMatches[itemIndex] = previousItems[previousIndex];
+    historical[itemIndex] = recordedFood(previousItems[previousIndex]);
+  };
   items.forEach((item, i) => {
+    if (previousItems[i] && unchanged(item, previousItems[i])) match(i, i);
+  });
+  items.forEach((item, i) => {
+    if (previousMatches[i]) return;
     const index = previousItems.findIndex((old, oldIndex) => {
       if (matched.has(oldIndex)) return false;
       return unchanged(item, old);
     });
-    if (index >= 0) {
-      matched.add(index);
-      previousMatches[i] = previousItems[index];
-      historical[i] = recordedFood(previousItems[index]);
-    }
+    if (index >= 0) match(i, index);
   });
   const ids = [...new Set(items.filter((_, i) => !historical[i]).map(item => item.foodId))];
   const foods = ids.length ? await firestoreCatalog(db).byIds(ids, tx) : new Map<string, Food>();

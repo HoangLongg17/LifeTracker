@@ -156,6 +156,42 @@ test('Edit and delete a meal through its journal actions', { skip: !local }, asy
       const updated = (await account.collection('mealLogs').doc(entryId).get()).data()!;
       assert.equal(updated.items[0].referenceSnapshot.nutrients.energyKcal,catalogCabbage.energyKcal + 10);
       assert.deepEqual(updated.items[1],original.items[1]);
+
+      const equalEntryId = 'duplicate-equal-portions';
+      const equalLoggedAt = '2026-01-19T09:04:47.123Z';
+      const equalServings = [
+        { foodId:cabbageId, consumedGrams:100 },
+        { foodId:cabbageId, consumedGrams:100 },
+      ];
+      assert.equal((await call('POST','',{
+        entryId:equalEntryId, loggedAt:equalLoggedAt, timeZone:common.timeZone, mealType:'snack', items:equalServings,
+      })).status,201);
+      const equalOriginal = (await account.collection('mealLogs').doc(equalEntryId).get()).data()!;
+      assert.equal((await call('PATCH','/'+equalEntryId,{
+        version:1, loggedAt:equalLoggedAt, timeZone:common.timeZone, mealType:'snack',
+        items:[equalServings[0],{foodId:cabbageId,consumedGrams:150}],
+      })).status,200);
+      const equalUpdated = (await account.collection('mealLogs').doc(equalEntryId).get()).data()!;
+      assert.deepEqual(equalUpdated.items[0],equalOriginal.items[0]);
+      assert.equal(equalUpdated.items[1].referenceSnapshot.nutrients.energyKcal,catalogCabbage.energyKcal + 10);
+    });
+    await t.test('reordering duplicate-food lines retains each line snapshot by food and portion', async () => {
+      const entryId = 'reordered-items';
+      const loggedAt = '2026-01-18T09:04:47.123Z';
+      const portions = [
+        { foodId:cabbageId, consumedGrams:100 },
+        { foodId:cabbageId, consumedGrams:200 },
+      ];
+      assert.equal((await call('POST','',{
+        entryId, loggedAt, timeZone:common.timeZone, mealType:'snack', items:portions,
+      })).status,201);
+      const original = (await account.collection('mealLogs').doc(entryId).get()).data()!;
+      assert.equal((await call('PATCH','/'+entryId,{
+        version:1, loggedAt, timeZone:common.timeZone, mealType:'snack', items:[...portions].reverse(),
+      })).status,200);
+      const updated = (await account.collection('mealLogs').doc(entryId).get()).data()!;
+      assert.deepEqual(updated.items,[...original.items].reverse());
+      assert.equal(updated.totals.energyKcal,original.totals.energyKcal);
     });
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));

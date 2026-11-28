@@ -65,9 +65,9 @@ function recordedFood(item: DocumentData): Food {
 }
 
 async function mealSources(db: Firestore, tx: Transaction, items: PortionItem[], previous?: DocumentData) {
-  // Match unchanged lines by food and portion so removing another line cannot refresh their snapshot.
   const previousItems: DocumentData[] = Array.isArray(previous?.items) ? previous.items : [];
   const matched = new Set<number>();
+  const previousMatches: (DocumentData | undefined)[] = new Array(items.length);
   const historical: (Food | undefined)[] = new Array(items.length);
   const unchanged = (item: PortionItem, old: DocumentData) => {
     if (old.foodId !== item.foodId) return false;
@@ -75,33 +75,31 @@ async function mealSources(db: Firestore, tx: Transaction, items: PortionItem[],
     return input.quantity === item.quantity && input.consumedGrams === item.consumedGrams &&
       input.consumedMl === item.consumedMl;
   };
+  const match = (itemIndex: number, previousIndex: number) => {
+    matched.add(previousIndex);
+    previousMatches[itemIndex] = previousItems[previousIndex];
+    historical[itemIndex] = recordedFood(previousItems[previousIndex]);
+  };
   items.forEach((item, i) => {
-    const old = previousItems[i];
-    if (old && unchanged(item, old)) {
-      matched.add(i);
-      historical[i] = recordedFood(old);
-    }
+    if (previousItems[i] && unchanged(item, previousItems[i])) match(i, i);
   });
   items.forEach((item, i) => {
-    if (historical[i]) return;
+    if (previousMatches[i]) return;
     const index = previousItems.findIndex((old, oldIndex) => {
       if (matched.has(oldIndex)) return false;
       return unchanged(item, old);
     });
-    if (index >= 0) {
-      matched.add(index);
-      historical[i] = recordedFood(previousItems[index]);
-    }
+    if (index >= 0) match(i, index);
   });
   const ids = [...new Set(items.filter((_, i) => !historical[i]).map(item => item.foodId))];
   const foods = ids.length ? await firestoreCatalog(db).byIds(ids, tx) : new Map<string, Food>();
   const estimate = calculatePortions(items, foods, historical);
-  return { historical, foods, estimate, previewTag: mealPreviewTag(items, foods, historical) };
+  return { previousMatches, historical, foods, estimate, previewTag: mealPreviewTag(items, foods, historical) };
 }
 
 async function mealFields(db: Firestore, tx: Transaction, uid: string, day: string, draft: MealDraft, previous?: DocumentData) {
   const { items } = draft;
-  const { historical, foods, estimate, previewTag } = await mealSources(db, tx, items, previous);
+  const { previousMatches, historical, foods, estimate, previewTag } = await mealSources(db, tx, items, previous);
   if (draft.previewTag && draft.previewTag !== previewTag) throw new MealError(409, 'FOOD_CHANGED');
   const warnings: MealWarning[] = [...estimate.warnings];
   if (estimate.totals.energyKcal !== null) {
@@ -114,7 +112,7 @@ async function mealFields(db: Firestore, tx: Transaction, uid: string, day: stri
   }
   if (warnings.length && !draft.warningConfirmed) throw new MealError(400, 'WARNING_CONFIRMATION_REQUIRED', undefined, warnings);
   const stored = estimate.items.map((calculated, i) => {
-    if (historical[i]) return previous!.items[i];
+    if (previousMatches[i]) return previousMatches[i];
     const food = foods.get(calculated.foodId)!;
     const requested = items[i];
     const { amount, unit, ...values } = calculated;

@@ -425,8 +425,8 @@ test('bootstrap creates the group schema atomically and repairs only missing doc
       timeZone: 'UTC',
     });
     assert.equal(sameMinuteNewer.status, 201);
-    assert.equal(docs.get(profilePath)?.currentWeightKg, 68);
-    assert.equal((await (await profileApi('valid')).json()).currentWeightKg, 68);
+    assert.equal(docs.get(profilePath)?.currentWeightKg, 67);
+    assert.equal((await (await profileApi('valid')).json()).currentWeightKg, 67);
     const deleteSameMinuteNewer = await fetch(`http://127.0.0.1:${address.port}/me/weights/same-minute-newer?version=1`, {
       method: 'DELETE',
       headers: { Authorization: 'Bearer valid' },

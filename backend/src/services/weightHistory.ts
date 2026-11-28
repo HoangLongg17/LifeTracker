@@ -18,6 +18,21 @@ function millis(value: unknown): number | null {
   return null;
 }
 
+function compareInstants(left: unknown, right: unknown) {
+  const instant = (value: unknown) => {
+    if (value instanceof Timestamp) return { seconds: value.seconds, nanoseconds: value.nanoseconds };
+    const timestamp = millis(value);
+    if (timestamp === null) return { seconds: 0, nanoseconds: 0 };
+    const seconds = Math.floor(timestamp / 1000);
+    return { seconds, nanoseconds: (timestamp - seconds * 1000) * 1_000_000 };
+  };
+  const a = instant(left);
+  const b = instant(right);
+  return a.seconds === b.seconds
+    ? Math.sign(a.nanoseconds - b.nanoseconds)
+    : Math.sign(a.seconds - b.seconds);
+}
+
 function validTimeZone(value: unknown): value is string {
   if (typeof value !== 'string' || value.length === 0) return false;
   try {
@@ -70,11 +85,9 @@ function logEntryId(log: WeightLog) {
 }
 
 export function compareWeightLogs(left: WeightLog, right: WeightLog) {
-  const leftMeasuredMinute = Math.floor((millis(left.data.measuredAt) ?? 0) / 60_000);
-  const rightMeasuredMinute = Math.floor((millis(right.data.measuredAt) ?? 0) / 60_000);
-  const measuredDifference = rightMeasuredMinute - leftMeasuredMinute;
+  const measuredDifference = compareInstants(right.data.measuredAt, left.data.measuredAt);
   if (measuredDifference !== 0) return measuredDifference;
-  const updatedDifference = (millis(right.data.updatedAt) ?? 0) - (millis(left.data.updatedAt) ?? 0);
+  const updatedDifference = compareInstants(right.data.updatedAt, left.data.updatedAt);
   if (updatedDifference !== 0) return updatedDifference;
   const leftId = logEntryId(left);
   const rightId = logEntryId(right);

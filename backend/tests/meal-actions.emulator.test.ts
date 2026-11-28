@@ -157,6 +157,24 @@ test('Edit and delete a meal through its journal actions', { skip: !local }, asy
       assert.equal(updated.items[0].referenceSnapshot.nutrients.energyKcal,catalogCabbage.energyKcal + 10);
       assert.deepEqual(updated.items[1],original.items[1]);
     });
+    await t.test('reordering duplicate-food lines retains each line snapshot by food and portion', async () => {
+      const entryId = 'reordered-items';
+      const loggedAt = '2026-01-18T09:04:47.123Z';
+      const portions = [
+        { foodId:cabbageId, consumedGrams:100 },
+        { foodId:cabbageId, consumedGrams:200 },
+      ];
+      assert.equal((await call('POST','',{
+        entryId, loggedAt, timeZone:common.timeZone, mealType:'snack', items:portions,
+      })).status,201);
+      const original = (await account.collection('mealLogs').doc(entryId).get()).data()!;
+      assert.equal((await call('PATCH','/'+entryId,{
+        version:1, loggedAt, timeZone:common.timeZone, mealType:'snack', items:[...portions].reverse(),
+      })).status,200);
+      const updated = (await account.collection('mealLogs').doc(entryId).get()).data()!;
+      assert.deepEqual(updated.items,[...original.items].reverse());
+      assert.equal(updated.totals.energyKcal,original.totals.energyKcal);
+    });
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
     await db.terminate(); await deleteApp(app);
